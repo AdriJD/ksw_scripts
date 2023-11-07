@@ -120,13 +120,32 @@ if __name__ == '__main__':
     else:
         icov_noise_ell = None
 
-    def alm_loader_template(ipath, pslice, itotcov_ell, lmax=None, b_ell=None):
+    def alm_loader_template(ipath, pslice, itotcov_ell, lmax, b_ell=None):
+        '''
+        Template function for loading alms from disk and filtering them.
+
+        Parameters
+        ----------
+        ipath : str
+            Path to alm file.
+        pslice : slice
+            Slice into alm file.
+        itotcov_ell : (npol, npol, nell) array
+            Isotropic inverse covariance matrix.
+        lmax : int
+            Truncate laoded alms to this lmax.
+        b_ell : (npol, nell) array, optional
+            Beam transfer function.
+        
+        Returns
+        -------
+        alm : (npol, nelem) complex array
+            Loaded, sliced and filtered alm.
+        '''
 
         hdu = np.asarray([1, 2, 3])[pslice]
         alm = np.asarray(hp.read_alm(ipath, hdu=hdu))
 
-        print(f'{alm=}')
-        
         ainfo = curvedsky.alm_info(hp.Alm.getlmax(alm.shape[-1]))
         
         if lmax:
