@@ -499,8 +499,8 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
                         mask, dtype, sqrt_cov_pix_op=None,
                         wav_noise_opts=None, icov_opts=None):
     '''
-    Generate signal + noise simulation and return the
-    inverse-covariance filtered version.
+    Generate signal + noise simulation and return the inverse-covariance
+    filtered version.
 
     Parameters
     ----------
@@ -601,7 +601,26 @@ def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None,
 
 def icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
     '''
+    Inverse-covariance weight a set of spherical harmonic coefficients assuming
+    isotropic covariance, see `get_itotcov_ell`.
 
+    Parameters
+    ----------
+    alm : (npol, nelem) complex array
+        Input alms.
+    ainfo : curvedsky.alm_info object.
+        Metainfo alms.
+    itotcov_ell : (npol, npol, nell) array
+        Isotropic total inverse covariance.
+    b_ell : (npol, nell) array, optional
+        Beam transfer function.
+    inplace : bool, optional
+        If set, do in-place filtering.
+
+    Returns
+    -------
+    alm : (npol, nelem) complex array
+        Inverse-covariance filtered alms.
     '''
 
     if b_ell is not None:
@@ -617,7 +636,30 @@ def icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
 
 def icov_pix_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
     '''
+    Inverse-covariance weight an input map assuming isotropic covariance,
+    see `get_itotcov_ell`.
 
+    Parameters
+    ----------
+    imap : (npol, npix) array
+        Input map.
+    minfo : optweight.map_utils.MapInfo object
+        Metainfo input map.
+    ainfo : curvedsky.alm_info object.
+        Metainfo alms.
+    spin : int or array-like
+        Spin values for spherical harmonic transforms, should match npol. 
+    itotcov_ell : (npol, npol, nell) array
+        Isotropic total inverse covariance.
+    b_ell : (npol, nell) array, optional
+        Beam transfer function.
+    inplace : bool, optional
+        If set, do in-place filtering.
+
+    Returns
+    -------
+    alm : (npol, nelem) complex array
+        Inverse-covariance filtered alms.
     '''
 
     npol = imap.shape[0]
@@ -626,3 +668,51 @@ def icov_pix_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
     sht.map2alm(imap, alm, minfo, ainfo, spin)
 
     return icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell, inplace=True)
+
+def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
+    '''
+    Write results from estimate_fnl to text file file.
+
+    Parameters
+    ----------
+    ofile : str
+        Path to output txt file. Will be overwritten!
+    idxs : (niter) int array
+        Index for each estimate.
+    fnls : (niter) array
+        fNL estimates.
+    cubics : (niter) array
+        Cubic term for each estimate.
+    lin_terms : (niter) array
+        Linear term for each estimate.
+    fishers : float or (niter) array
+        Fisher information. For debuggin purpose, is allowed to vary per estimate.
+    '''
+
+    idxs = np.asarray(idxs)
+    fnls = np.asarray(fnls)
+    cubics = np.asarray(cubics)
+    lin_terms = np.asarray(lin_terms)
+    fishers = np.asarray(fishers)    
+    
+    niter = idxs.size
+
+    if lin_terms.size == 1:
+        lin_terms *= np.ones(niter)
+
+    if fishers.size == 1:
+        fishers *= np.ones(fishers)
+
+    mat2save = np.zeros((niter, 5))
+    mat2save[:,0] = idxs
+    mat2save[:,1] = fnls
+    mat2save[:,2] = cubics
+    mat2save[:,3] = lin_terms
+    mat2save[:,4] = fishers
+        
+    header = f'fnl_mean = {np.mean(fnls):+.17e}, fnl_std = {np.std(fnls):+.17e}\n'
+    header += '{:8s}\t{:24s}\t{:24s}\t{:24s}\t{:24s}'.format(
+        'idx', 'fnl', 'cubic', 'lin_term', 'fisher')
+
+    fmt = ['%9d', '%+.17e', '%+.17e','%+.17e', '%+.17e']
+    np.savetxt(ofile, mat2save, fmt=fmt, delimiter='\t', header=header)

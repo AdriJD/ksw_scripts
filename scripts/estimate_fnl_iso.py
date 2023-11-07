@@ -16,7 +16,9 @@ opj = os.path.join
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
-        description='Estimate fnl for full sky maps and diagonal fisher.')
+        description='Estimate fnl assuming diagonal covariance matrix. No Monte-Carlo '\
+        'quantities are computed, so fast, but suboptimal in presence of mask or '\
+        'anisotropic noise covariance.')
     # IO.
     parser.add_argument("--imap_files", type=str, nargs='+',
                         help='Input maps from which fnl is estimated.')
@@ -166,11 +168,9 @@ if __name__ == '__main__':
 
     fisher = estimator.compute_fisher_isotropic(
         itotcov_ell, return_matrix=False, comm=comm)
-    estimates = estimator.compute_estimate_batch(
+    fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
         alm_loader, args.ialm_files, comm=comm, fisher=fisher,
         lin_term=0, theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)
         
-    # SAVE ESTIMATES
-    if comm.rank == 0:
-        print(f'{fisher}')
-        print(f'{estimates}')
+    script_utils.write_fnl(opj(fnldir, 'estimates.txt'), np.arange(len(args.ialm_files)),
+                           fnls, cubics, lin_terms, fishers)
