@@ -212,9 +212,9 @@ def process_signal_spectra(spectra, lmax, no_te=False, dtype=np.float64):
 
     return s_ell.astype(dtype, copy=False)
 
-def slice_spectrum(cov_ell, pslice):
+def slice_spectrum(cov_ell, pslice, lmax=None):
     '''
-    Slice spectrum to desired polarizations.
+    Slice spectrum to desired polarizations and lmax.
 
     Parameters
     ----------
@@ -222,14 +222,28 @@ def slice_spectrum(cov_ell, pslice):
         Input spectrum.
     pslice : slice, optional
         Slice into T, E, B axis.
+    lmax : int, optional
+        Maximum ell.
 
     Returns
     -------
-    cov_ell_out : (npol, npol, nell) array
+    cov_ell_out : (npol, npol, lmax + 1) array
         Sliced copy of input spectrum.
-    '''
 
-    return np.ascontiguousarray(cov_ell[pslice,pslice])
+    Raises
+    ------
+    ValueError
+        If lmax is too large.
+    '''
+    
+    if lmax is None:
+        lmax = cov_ell.shape[-1] - 1
+
+    if lmax > (cov_ell.shape[-1] - 1):
+        raise ValueError(
+            f'{lmax=} exceeds {cov_ell.shape[-1]-1=} of input array.')
+                
+    return np.ascontiguousarray(cov_ell[pslice,pslice,:lmax+1])
 
 def process_cov_wav(cov_wav, nl2d, pslice, dtype=np.float64):
     '''

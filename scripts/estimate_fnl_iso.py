@@ -28,9 +28,11 @@ if __name__ == '__main__':
                         help='Output directory.')    
     parser.add_argument("--red-bisp-file", type=str, required=True,
         help='Path to reduced bispectrum .hdf5 file')
-    parser.add_argument("--signal-ps-file", required=True, type=str,
+    parser.add_argument("--signal-ps-file", type=str,
         help='Path to .txt file with ell, TT, EE, BB, TE columns [D_ell].')
-    parser.add_argument("--noise-ps-file", type=str,
+    parser.add_argument("--signal-cov-file", type=str,
+        help='Path to .npy file with (3, 3, nell) signal power spectrum [C_ell].')    
+    parser.add_argument("--noise-cov-file", type=str,
         help='Path to .npy file with (3, 3, nell) noise power spectrum [C_ell].')
     parser.add_argument("--beam-fwhm", type=float,
         help='FWHM in arcmin used for the beam.')
@@ -57,19 +59,21 @@ if __name__ == '__main__':
     parser.add_argument("--ksw-verbose", action='store_true',
         help='Print feedback to stdout')
     args = parser.parse_args()
-    
-    print(args)
+
+    if comm.rank == 0:
+        print(args)
 
     imgdir = opj(args.odir, 'img')
     logdir = opj(args.odir, 'log')
     fnldir = opj(args.odir, 'fnl')
 
-    if comm.Get_rank() == 0:
+    if comm.rank == 0:
         os.makedirs(args.odir, exist_ok=True)
         os.makedirs(imgdir, exist_ok=True)
         os.makedirs(logdir, exist_ok=True)
         os.makedirs(fnldir, exist_ok=True)
-
+    comm.Barrier()
+        
     if args.t_only:
         pol = ['T']
         spin = 0
@@ -106,18 +110,28 @@ if __name__ == '__main__':
     else:
         b_ell = None
 
-    ainfo = curvedsky.alm_info(args.ksw_lmax)        
-    cov_ell = script_utils.process_signal_spectra(
-        np.loadtxt(args.signal_ps_file, skiprows=1, usecols=[1, 2, 3, 4]).T,
-        args.ksw_lmax, no_te=no_te, dtype=dtype)
-    cov_ell = script_utils.slice_spectrum(cov_ell, pslice)    
+    ainfo = curvedsky.alm_info(args.ksw_lmax)
+    if args.signal_ps_file is not None:
+        if args.signal_cov_file is not None:
+            raise ValueError('Cannot have both signal ps and cov files.')
+        cov_ell = script_utils.process_signal_spectra(
+            np.loadtxt(args.signal_ps_file, skiprows=1, usecols=[1, 2, 3, 4]).T,
+            args.ksw_lmax, no_te=no_te, dtype=dtype)
+    elif args.signal_cov_file is not None:
+        cov_ell = np.load(args.signal_cov_file)
+    else:
+        raise ValueError('Signal ps or cov file is needed.')
+
+    cov_ell = script_utils.slice_spectrum(cov_ell, pslice, lmax=args.ksw_lmax)
+
     sqrt_cov_ell_op = operators.EllMatVecAlm(
         ainfo, cov_ell, power=0.5)    
     icov_ell = mat_utils.matpow(cov_ell, -1)
 
-    if args.noise_ps_file:
-        cov_noise_ell = np.load(args.noise_ps_file)
-        cov_noise_ell = script_utils.slice_spectrum(cov_noise_ell, pslice)
+    if args.noise_cov_file:
+        cov_noise_ell = np.load(args.noise_cov_file)
+        cov_noise_ell = script_utils.slice_spectrum(
+            cov_noise_ell, pslice, lmax=args.ksw_lmax)
         icov_noise_ell = mat_utils.matpow(cov_noise_ell, -1)
     else:
         icov_noise_ell = None
