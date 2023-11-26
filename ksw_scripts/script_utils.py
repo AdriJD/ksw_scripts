@@ -4,7 +4,9 @@ A collection of utilities shared between scripts.
 import numpy as np
 
 import healpy as hp
-from optweight import map_utils, mat_utils, alm_utils, alm_c_utils, sht
+from pixell import enmap
+from optweight import (map_utils, mat_utils, alm_utils, alm_c_utils, sht,
+                       solvers, preconditioners, type_utils)
 
 def get_radii_leo(oversample=1):
     '''
@@ -58,7 +60,7 @@ def process_mask(mask, npol):
 
     Parameters
     ----------
-    mask_file : (npol, ny, nx) or (ny, nx) enmap
+    mask : (npol, ny, nx) or (ny, nx) enmap
         Input mask.
     npol : int
         Number of polarizations.
@@ -74,7 +76,6 @@ def process_mask(mask, npol):
         If input map does not match with input npol.
     '''
 
-    mask = enmap.read_map(mask_file)
     mask[mask < 1e-5] = 0
     mask[mask >= 1e-5] = 1
     mask = mask.astype(bool)
@@ -212,7 +213,7 @@ def process_signal_spectra(spectra, lmax, no_te=False, dtype=np.float64):
 
     return s_ell.astype(dtype, copy=False)
 
-def slice_spectrum(cov_ell, pslice, lmax=None):
+def slice_spectrum(cov_ell, pslice, lmax=None, lmin=None):
     '''
     Slice spectrum to desired polarizations and lmax.
 
@@ -224,6 +225,8 @@ def slice_spectrum(cov_ell, pslice, lmax=None):
         Slice into T, E, B axis.
     lmax : int, optional
         Maximum ell.
+    lmin : int, optional
+        Set values below lmin to zero.
 
     Returns
     -------
@@ -243,8 +246,12 @@ def slice_spectrum(cov_ell, pslice, lmax=None):
         raise ValueError(
             f'{lmax=} exceeds {cov_ell.shape[-1]-1=} of input array.')
                 
-    return np.ascontiguousarray(cov_ell[pslice,pslice,:lmax+1])
+    out = np.ascontiguousarray(cov_ell[pslice,pslice,:lmax+1])
+    if lmin is not None:
+        out[...,:lmin] = 0
 
+    return out
+        
 def process_cov_wav(cov_wav, nl2d, pslice, dtype=np.float64):
     '''
     Process wavelet covariance.
@@ -296,8 +303,6 @@ def process_icov_pix(icov_pix, pslice, dtype=np.float64):
     ----------
     icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap
         Per-pixel inverse covariance matrix.
-    npol : int
-        Number of polarizations.
     pslice : slice, optional
         Slice into T, E, B axis.
 
@@ -318,17 +323,15 @@ def process_icov_pix(icov_pix, pslice, dtype=np.float64):
 
     return icov_pix
 
-def init_solver(imap_template, ainfo, minfo, icov_ell, b_ell, mask,
+def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
                 spin, icov_pix=None, cov_wav=None, fkernels=None,
                 cov_noise_2d=None, itau_ell=None, swap_bm=False,
-                scale_a=False):
+                scale_a=False, no_masked_prec=False):
     '''
     Initialize CG solver and preconditioners.
 
     Parameters
     ----------
-    imap_template : (npol, npix) array
-        Input map
     ainfo : pixell.curvedsky.alm_info object
         Metainfo for output alms.
     minfo : map_utils.MapInfo object
@@ -358,13 +361,20 @@ def init_solver(imap_template, ainfo, minfo, icov_ell, b_ell, mask,
     scale_a : bool, optional
         If set, scale the A matrix to localization of N^-1 term. This may
         help convergence with small beams and high SNR data.
+    no_masked_prec : float, optional
+        If True, do not use the two masked preconditioners. Used for
+        full sky data.    
 
     Returns
     -------
-    solver :
-    prec_base
-    prec_masked_cg
-    prec_masked_mg
+    solver : optweight.solvers.CGWienerMap object
+        Uninitialized solver object.
+    prec_base : optweight.preconditioners object
+        Either harmonic or pseudo inverse preconditioner.
+    prec_masked_cg : optweight.preconditioners.MaskedPreconditionerCG object
+        Preconditioner for masked pixels.
+    prec_masked_mg : optweight.preconditioners.MaskedPreconditioner object
+        Preconditioner for masked pixels.    
     '''
 
     if scale_a:
@@ -374,8 +384,11 @@ def init_solver(imap_template, ainfo, minfo, icov_ell, b_ell, mask,
         sfilt = None
         lmax_mg = 6000
 
-    if icov_pix:
-        solver = solvers.from_arrays(
+    npol = icov_ell.shape[0]
+    imap_template = np.zeros((npol, minfo.npix), dtype=icov_ell.dtype)
+        
+    if icov_pix is not None:
+        solver = solvers.CGWienerMap.from_arrays(
             imap_template, minfo, ainfo, icov_ell, icov_pix,
             b_ell=b_ell, mask_pix=mask, minfo_mask=minfo,
             draw_constr=False, spin=spin, swap_bm=swap_bm, sfilt=sfilt)
@@ -383,7 +396,7 @@ def init_solver(imap_template, ainfo, minfo, icov_ell, b_ell, mask,
         prec_base = preconditioners.PseudoInvPreconditioner(
             ainfo, icov_ell, icov_pix, minfo, spin, b_ell=b_ell, sfilt=sfilt)
 
-    elif icov_wav:
+    elif icov_wav is not None:
         solver = solvers.CGWienerMap.from_arrays_fwav(
             imap_template, minfo, ainfo, icov_ell, cov_wav, fkernels,
             b_ell=b_ell, mask_pix=mask, minfo_mask=minfo,
@@ -393,19 +406,23 @@ def init_solver(imap_template, ainfo, minfo, icov_ell, b_ell, mask,
         prec_base = preconditioners.HarmonicPreconditioner(
             ainfo, icov_ell, b_ell=b_ell, itau=itau_ell, sfilt=sfilt)
 
-    prec_masked_cg = preconditioners.MaskedPreconditionerCG(
-        ainfo, icov_ell, 0, mask.astype(bool), minfo, lmax=None,
-        nsteps=15, lmax_r_ell=None, sfilt=sfilt)
-
-    prec_masked_mg = preconditioners.MaskedPreconditioner(
-        ainfo, icov_ell[0:1,0:1], 0, mask[0].astype(bool), minfo,
-        min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg, sfilt=sfilt)
+    if not no_masked_prec:
+        prec_masked_cg = preconditioners.MaskedPreconditionerCG(
+            ainfo, icov_ell, 0, mask.astype(bool), minfo, lmax=None,
+            nsteps=15, lmax_r_ell=None, sfilt=sfilt)
+        
+        prec_masked_mg = preconditioners.MaskedPreconditioner(
+            ainfo, icov_ell[0:1,0:1], 0, mask[0].astype(bool), minfo,
+            min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg, sfilt=sfilt)
+    else:
+        prec_masked_cg, prec_masked_mg = None, None
 
     return solver, prec_base, prec_masked_cg, prec_masked_mg
 
-def icov_pix(imap, solver=None, prec_base=None, prec_masked_cg=None,
-             prec_masked_mg=None, niter_cg=None, niter_mg=None,
-             ofile_template=None,):
+def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
+                 prec_masked_mg=None, niter_cg=0, two_level_cg=None,
+                 two_level_mg=None, niter_mg=0, no_masked_prec=False,
+                 ofile_template=None, verbose=False):
     #save_wiener=False, opath=None, write_counter=None):
     '''
     Filter input map using CG solver.
@@ -413,6 +430,18 @@ def icov_pix(imap, solver=None, prec_base=None, prec_masked_cg=None,
     Parameters
     ----------
 
+    two_level_cg : str, optional
+    two_level_mg : str, optional
+    niter_cg : int
+    niter_mg : int
+    no_masked_prec : float, optional
+        If True, do not use the two masked preconditioners. Used for
+        full sky data.
+    
+
+    verbose : bool, optional
+        If set, print basic CG convergence metric.
+    
     ofile_template : str
         If provided, write Wiener-filtered map to disk. May contain
         {idx} in path of filename, e.g. "/path/to/sim_{idx}.fits".
@@ -422,21 +451,37 @@ def icov_pix(imap, solver=None, prec_base=None, prec_masked_cg=None,
 
     '''
 
+    if (two_level_cg or two_level_mg) and no_masked_prec:
+        raise ValueError(f'Cannot have both two_level_prec and no_masked_prec')
+    
     solver.reset_preconditioner()
     solver.set_b_vec(imap)
-    solver.add_preconditioner(prec_base)
-    solver.add_preconditioner(prec_masked_cg)
+       
+    if two_level_cg:
+        solver.add_preconditioner(
+            get_2level_prec(prec_main, prec_masked_cg, solver, two_level_cg))
+    elif two_level_cg is None:
+        solver.add_preconditioner(prec_base)
+        if not no_masked_prec:
+            solver.add_preconditioner(prec_masked_cg)
+            
     solver.init_solver()
 
     niter = niter_cg + niter_mg
-
     for idx in range(niter_cg):
         solver.step()
         print(solver.i, solver.err)
 
     solver.reset_preconditioner()
     solver.add_preconditioner(prec_base)
-    solver.add_preconditioner(prec_masked_mg, sel=np.s_[0])
+
+    if two_level_mg:
+        solver.add_preconditioner(
+            get_2level_prec(prec_main, prec_masked_mg, solver, two_level_mg,
+                            sel_masked=np.s_[0]))
+    elif two_level_mg is None:            
+        if not no_masked_prec:
+            solver.add_preconditioner(prec_masked_mg, sel=np.s_[0])
 
     solver.b_vec = solver.b0
     if niter_cg == 0:
@@ -447,13 +492,14 @@ def icov_pix(imap, solver=None, prec_base=None, prec_masked_cg=None,
     for idx in range(niter_cg, niter):
 
         solver.step()
-        print(solver.i, solver.err, f'rank : {comm.rank}')
+        if verbose:            
+            print(solver.i, solver.err, f'rank : NOTIMPLEMENTED')
 
-    if save_wiener:
-        filename = opj(
-            opath, f'mc_gt_w_{write_counter[0]}.fits')
-        write_counter[0] += 1
-        hp.write_alm(opj(opath, filename), solver.x, overwrite=True)
+    #if save_wiener:
+    #    filename = opj(
+    #        opath, f'mc_gt_w_{write_counter[0]}.fits')
+    #    write_counter[0] += 1
+    #    hp.write_alm(opj(opath, filename), solver.x, overwrite=True)
 
     return solver.get_icov()
 
@@ -483,12 +529,24 @@ def draw_noise_wav(minfo, seed, dtype=np.float64, sqrt_cov_wav_op=None,
 
 def draw_noise_pix(sqrt_cov_pix_op, minfo, seed, dtype):
     '''
+    Draw a noise realization from per-pixel noise model.
 
+    Parameters
+    ----------
+    sqrt_cov_pix_op :
+    minfo :
+    seed :
+    dtype :
+
+    Returns
+    -------
+    omap : (npol, npix) array
+        Noise draw.
     '''
 
     rng = np.random.default_rng(seed)
 
-    sqrt_cov_pix_op.mpix.shape[0]
+    npol = sqrt_cov_pix_op.m_pix.shape[0]
     omap = rng.standard_normal(
         npol * minfo.npix).reshape((npol, minfo.npix))
     omap = sqrt_cov_pix_op(omap)
@@ -543,15 +601,15 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
     # Only mask signal.
     omap *= mask
 
-    if noise_wav_opts:
+    if wav_noise_opts:
         omap += draw_noise_wav(minfo, rng, dtype=dtype,
                                **wav_noise_opts)
     else:
         omap += draw_noise_pix(sqrt_cov_pix_op, minfo, rng, dtype)
 
-    return icov_pix(omap, **icov_opts)
+    return compute_icov(omap, **icov_opts)
 
-def icov_alm(alm, icov_opts):
+def compute_icov_alm(alm, icov_opts):
     '''
     Inverse-covariance filter a set of alm coefficients by
     first applying the P projection matrix (d_pix = P slm + n).
@@ -561,7 +619,7 @@ def icov_alm(alm, icov_opts):
     alm : (npol, nelem) complex array
         Input alms.
     icov_opts : dict
-        Keyword arguments for `icov_pix`.
+        Keyword arguments for `compute_icov`.
 
     Returns
     -------
@@ -569,9 +627,9 @@ def icov_alm(alm, icov_opts):
         Inverse-covariance filtered alms.
     '''
 
-    omap = solver.proj(alm)
+    omap = icov_opts['solver'].proj(alm)
 
-    return icov_pix(omap, **icov_opts)
+    return compute_icov(omap, **icov_opts)
 
 def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None,
                     b_ell=None):
@@ -613,7 +671,7 @@ def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None,
     
     return itotcov_ell
 
-def icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
+def compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
     '''
     Inverse-covariance weight a set of spherical harmonic coefficients assuming
     isotropic covariance, see `get_itotcov_ell`.
@@ -648,7 +706,7 @@ def icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
 
     return alm
 
-def icov_pix_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
+def compute_icov_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
     '''
     Inverse-covariance weight an input map assuming isotropic covariance,
     see `get_itotcov_ell`.
@@ -681,7 +739,7 @@ def icov_pix_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
         (npol, ainfo.nelem), type_utils.to_complex(imap.dtype))
     sht.map2alm(imap, alm, minfo, ainfo, spin)
 
-    return icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell, inplace=True)
+    return compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell, inplace=True)
 
 def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     '''

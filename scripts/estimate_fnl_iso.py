@@ -21,11 +21,11 @@ if __name__ == '__main__':
         'anisotropic noise covariance.')
     # IO.
     parser.add_argument("--imap_files", type=str, nargs='+',
-                        help='Input maps from which fnl is estimated.')
+        help='Input maps from which fnl is estimated.')
     parser.add_argument("--ialm_files", type=str, nargs='+',
-                        help='Input alms from which fnl is estimated.')
+        help='Input alms from which fnl is estimated.')
     parser.add_argument("--odir", required=True, type=str,
-                        help='Output directory.')    
+        help='Output directory.')    
     parser.add_argument("--red-bisp-file", type=str, required=True,
         help='Path to reduced bispectrum .hdf5 file')
     parser.add_argument("--signal-ps-file", type=str,
@@ -121,9 +121,8 @@ if __name__ == '__main__':
         cov_ell = np.load(args.signal_cov_file)
     else:
         raise ValueError('Signal ps or cov file is needed.')
-
-    cov_ell = script_utils.slice_spectrum(cov_ell, pslice, lmax=args.ksw_lmax)
-
+    cov_ell = script_utils.slice_spectrum(
+        cov_ell, pslice, lmax=args.ksw_lmax, lmin=2)
     sqrt_cov_ell_op = operators.EllMatVecAlm(
         ainfo, cov_ell, power=0.5)    
     icov_ell = mat_utils.matpow(cov_ell, -1)
@@ -167,14 +166,14 @@ if __name__ == '__main__':
         if lmax:
             alm, ainfo = alm_utils.trunc_alm(alm, ainfo, lmax)
         
-        return script_utils.icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
+        return script_utils.compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
 
     itotcov_ell = script_utils.get_itotcov_ell(
         icov_ell, icov_noise_ell=icov_noise_ell, b_ell=b_ell)
 
     alm_loader = lambda ipath : alm_loader_template(
         ipath, pslice, itotcov_ell, lmax=args.ksw_lmax, b_ell=b_ell)
-    icov = lambda alm : script_utils.icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
+    icov = lambda alm : script_utils.compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
 
     rb = ksw.ReducedBispectrum.init_from_file(args.red_bisp_file)
 
