@@ -26,6 +26,8 @@ if __name__ == '__main__':
         help='Path to .txt file with ell, TT, EE, BB, TE columns [D_ell].')
     parser.add_argument("--cont", action='store_true',
         help='Do not simulate maps that are already found on disk.')
+    parser.add_argument("--no-write-g", action='store_true',
+        help='Do not write the Gaussian alm to disk')
 
     # Simulations.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
@@ -44,8 +46,10 @@ if __name__ == '__main__':
         help='Number of theta rings processed jointly. Increase to improve '\
              'speed at the cost of higher memory consumption. Make sure this '\
              'number exceeds the number of threads.')
-    parser.add_argument("--ksw-niter", type=int, default=100,
-        help='Number of simulations used for Monte-Carlo quantities.')    
+    parser.add_argument("--ksw-nsims", type=int, required=True,
+        help='Number of simulations generated.')
+    parser.add_argument("--ksw-sim-idx-start", type=int, required=True,
+        help='Start at this sim index.')            
     parser.add_argument("--ksw-verbose", action='store_true',
         help='Print feedback to stdout')
     args = parser.parse_args()
@@ -133,9 +137,10 @@ if __name__ == '__main__':
         '''
         draw = script_utils.draw_signal_alm(
             sqrt_cov_ell_op, ainfo, rng, type_utils.to_complex(dtype))
-        
-        # Write to disk based on seed
-        alm_writer(rng, draw, opath_g_template)
+
+        if not args.no_write_g:
+            # Write to disk based on seed
+            alm_writer(rng, draw, opath_g_template)
         
         return icov_ell_op(draw)
 
@@ -143,7 +148,8 @@ if __name__ == '__main__':
 
     estimator = ksw.KSW([rb], None, args.ksw_lmax, pol, precision=precision)
 
-    seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)       
+    seeds = np.random.SeedSequence(args.seed).spawn(
+        args.ksw_nsims + args.ksw_sim_idx_start)       
 
     if args.cont:
         for sidx, rng in enumerate(seeds):

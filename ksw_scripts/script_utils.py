@@ -4,9 +4,26 @@ A collection of utilities shared between scripts.
 import numpy as np
 
 import healpy as hp
-from pixell import enmap
+from pixell import enmap, curvedsky
 from optweight import (map_utils, mat_utils, alm_utils, alm_c_utils, sht,
                        solvers, preconditioners, type_utils)
+
+def slice2len(sel):
+    '''
+    Convert slice object to number of resulting items.
+
+    Parameters
+    ----------
+    sel : slice
+       Slice.
+
+    Returns
+    -------
+    length : int
+        Number of items resulting from slice.
+    '''
+
+    return np.arange(sel.start, sel.stop, sel.step).size
 
 def get_radii_leo(oversample=1):
     '''
@@ -54,7 +71,7 @@ def get_radii_rec(oversample=1):
 
     return radii
 
-def process_mask(mask, npol):
+def process_mask(mask, iquslice):
     '''
     Convert input mask to boolean mask.
 
@@ -62,30 +79,40 @@ def process_mask(mask, npol):
     ----------
     mask : (npol, ny, nx) or (ny, nx) enmap
         Input mask.
-    npol : int
-        Number of polarizations.
+    iquslice : slice
+        Slice into IQU axis.
 
     Returns
     -------
-    mask_bool : (npol, npix)
-        Boolean mask, True for good pixels.
+    mask_bool : (npol, ny, nx)
+        Boolean mask, True for good pixels. 
 
     Raises
     ------
     ValueError
         If input map does not match with input npol.
+
+    Notes
+    -----
+    Npol of output mask can be, depending on iquslice, 1 (T),
+    2 (Q, U) or 3 (I, Q, U).    
     '''
 
-    mask[mask < 1e-5] = 0
-    mask[mask >= 1e-5] = 1
+    mask[mask < 0.5] = 0
+    mask[mask >= 0.5] = 1
     mask = mask.astype(bool)
 
     mask = mat_utils.atleast_nd(mask, 3)
-    if mask.shape[0] == 1:
-        mask = mask * np.ones(npol)[:,np.newaxis,np.newaxis]
-    elif mask.shape[0] != npol:
-        raise ValueError(f'{mask.shape=} incompatible with {npol=}')
+    npol = mask.shape[0]
 
+    if npol not in (1, 3):
+        raise ValueError(f'{mask.shape=} not supported, npol != 1, 3')
+    
+    if npol == 3:
+        mask = np.ascontiguousarray(mask[iquslice])
+    elif npol == 1:        
+        mask = mask * np.ones(slice2len(iquslice))[:,np.newaxis,np.newaxis]
+        
     return mask
 
 def compute_w3(mask):
@@ -107,7 +134,7 @@ def compute_w3(mask):
 
     pmap = enmap.pixsizemap(mask.shape[-2:], mask.wcs)
     w3 = np.sum(((mask) ** 3) * pmap, axis=(-1, -2))
-    w3 /= np.pi / 4.
+    w3 /= (4 * np.pi)
 
     return w3
 
@@ -139,7 +166,7 @@ def find_minfo(shape, wcs):
 
     return minfo
 
-def get_b_ell(fwhm, lmax, npol, dtype=np.float64):
+def get_b_ell(fwhm, lmax, iquslice, dtype=np.float64):
     """
     Get beam window function given FWHM.
 
@@ -149,8 +176,8 @@ def get_b_ell(fwhm, lmax, npol, dtype=np.float64):
         FWHM in arcmin.
     lmax : int
         Max multipole.
-    npol : int
-        Number of polarizations.
+    iquslice : slice
+        Slice into IQU axis.
     dtype : type, optional
         Type of output.
 
@@ -160,6 +187,7 @@ def get_b_ell(fwhm, lmax, npol, dtype=np.float64):
         Gaussian beam window function.
     """
 
+    npol = slice2len(iquslice)
     b_ell = np.ones((npol, lmax+1), dtype=dtype)
     b_ell[:] *= hp.gauss_beam(np.radians(fwhm / 60), lmax=lmax)
 
@@ -237,22 +265,26 @@ def slice_spectrum(cov_ell, pslice, lmax=None, lmin=None):
     ------
     ValueError
         If lmax is too large.
+        If input npol != 3.
     '''
-    
+
     if lmax is None:
         lmax = cov_ell.shape[-1] - 1
 
     if lmax > (cov_ell.shape[-1] - 1):
         raise ValueError(
             f'{lmax=} exceeds {cov_ell.shape[-1]-1=} of input array.')
-                
+    
+    if cov_ell.shape[0] != 3:
+        raise ValueError(f'{cov_ell.shape=} does not have npol=3.')
+    
     out = np.ascontiguousarray(cov_ell[pslice,pslice,:lmax+1])
     if lmin is not None:
         out[...,:lmin] = 0
 
     return out
-        
-def process_cov_wav(cov_wav, nl2d, pslice, dtype=np.float64):
+
+def process_cov_wav(cov_wav, nl2d, iquslice, dtype=np.float64):
     '''
     Process wavelet covariance.
 
@@ -262,8 +294,8 @@ def process_cov_wav(cov_wav, nl2d, pslice, dtype=np.float64):
         Input covariance matrix.
     nl2d : (npol, npol, nly, nlx) array
         Noise power specrum.
-    pslice : slice, optional
-        Slice into T, E, B axis.
+    iquslice : slice, optional
+        Slice into I, Q, U axis.
     dtype : type, optional
         Dtype of output.
 
@@ -284,18 +316,18 @@ def process_cov_wav(cov_wav, nl2d, pslice, dtype=np.float64):
 
     # If E-only or T-only, constrain wav_maps to only contain correct dims.
     for key in cov_wav.maps:
-        cov_wav.maps[key] = cov_wav.maps[key][pslice,pslice]
+        cov_wav.maps[key] = cov_wav.maps[key][iquslice,iquslice]
         # Always make copy to ensure contiguous array.
         cov_wav.maps[key] = cov_wav.maps[key].astype(dtype, copy=True)
     cov_wav.preshape = cov_wav.maps[0,0].shape[:-1]
     cov_wav.dtype = dtype
 
-    nl2d = nl2d[pslice,pslice,:,:]
+    nl2d = nl2d[iquslice,iquslice,:,:]
     nl2d = nl2d.astype(dtype, copy=True)
 
     return cov_wav, nl2d
 
-def process_icov_pix(icov_pix, pslice, dtype=np.float64):
+def process_icov_pix(icov_pix, iquslice, dtype=np.float64):
     '''
     If needed, slice into icov matrix. Ensure dtype.
 
@@ -303,21 +335,29 @@ def process_icov_pix(icov_pix, pslice, dtype=np.float64):
     ----------
     icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap
         Per-pixel inverse covariance matrix.
-    pslice : slice, optional
-        Slice into T, E, B axis.
+    iquslice : slice, optional
+        Slice into I, Q, U axis.
 
     Returns
     -------
-    icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap  
+    icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap
         Sliced and recasted inverse covariance matrix.
+
+    Raises
+    ------
+    ValueError
+        If input is not IQU.
     '''
 
     icov_pix = mat_utils.atleast_nd(icov_pix, 3)
 
+    if icov_pix.shape[0] != 3:
+        raise ValueError(f'{icov_pix.shape=}, npol is not 3.')
+    
     if icov_pix.ndim == 3:
-        icov_pix = icov_pix[pslice].astype(dtype, copy=True)
+        icov_pix = icov_pix[iquslice].astype(dtype, copy=True)
     elif icov_pix.ndim == 4:
-        icov_pix = icov_pix[pslice,pslice].astype(dtype, copy=True)
+        icov_pix = icov_pix[iquslice,iquslice].astype(dtype, copy=True)
     else:
         raise ValueError(f'{icov_pix.shape=} not supported')
 
@@ -326,7 +366,7 @@ def process_icov_pix(icov_pix, pslice, dtype=np.float64):
 def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
                 spin, icov_pix=None, cov_wav=None, fkernels=None,
                 cov_noise_2d=None, itau_ell=None, swap_bm=False,
-                scale_a=False, no_masked_prec=False):
+                scale_a=False, lensop=None, no_masked_prec=False):
     '''
     Initialize CG solver and preconditioners.
 
@@ -361,9 +401,11 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
     scale_a : bool, optional
         If set, scale the A matrix to localization of N^-1 term. This may
         help convergence with small beams and high SNR data.
+    lensop : lensing.LensAlm object
+        Lensing instance used to compute lensing and adjoint lensing.
     no_masked_prec : float, optional
         If True, do not use the two masked preconditioners. Used for
-        full sky data.    
+        full sky data.
 
     Returns
     -------
@@ -374,7 +416,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
     prec_masked_cg : optweight.preconditioners.MaskedPreconditionerCG object
         Preconditioner for masked pixels.
     prec_masked_mg : optweight.preconditioners.MaskedPreconditioner object
-        Preconditioner for masked pixels.    
+        Preconditioner for masked pixels.
     '''
 
     if scale_a:
@@ -386,12 +428,13 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
 
     npol = icov_ell.shape[0]
     imap_template = np.zeros((npol, minfo.npix), dtype=icov_ell.dtype)
-        
+    
     if icov_pix is not None:
         solver = solvers.CGWienerMap.from_arrays(
             imap_template, minfo, ainfo, icov_ell, icov_pix,
             b_ell=b_ell, mask_pix=mask, minfo_mask=minfo,
-            draw_constr=False, spin=spin, swap_bm=swap_bm, sfilt=sfilt)
+            draw_constr=False, spin=spin, swap_bm=swap_bm, sfilt=sfilt,
+            lensop=lensop)
 
         prec_base = preconditioners.PseudoInvPreconditioner(
             ainfo, icov_ell, icov_pix, minfo, spin, b_ell=b_ell, sfilt=sfilt)
@@ -401,7 +444,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
             imap_template, minfo, ainfo, icov_ell, cov_wav, fkernels,
             b_ell=b_ell, mask_pix=mask, minfo_mask=minfo,
             draw_constr=False, spin=spin, swap_bm=swap_bm, sfilt=sfilt,
-            cov_noise_2d=cov_noise_2d)
+            cov_noise_2d=cov_noise_2d, lensop=lensop)
 
         prec_base = preconditioners.HarmonicPreconditioner(
             ainfo, icov_ell, b_ell=b_ell, itau=itau_ell, sfilt=sfilt)
@@ -410,7 +453,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
         prec_masked_cg = preconditioners.MaskedPreconditionerCG(
             ainfo, icov_ell, 0, mask.astype(bool), minfo, lmax=None,
             nsteps=15, lmax_r_ell=None, sfilt=sfilt)
-        
+
         prec_masked_mg = preconditioners.MaskedPreconditioner(
             ainfo, icov_ell[0:1,0:1], 0, mask[0].astype(bool), minfo,
             min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg, sfilt=sfilt)
@@ -437,26 +480,26 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     no_masked_prec : float, optional
         If True, do not use the two masked preconditioners. Used for
         full sky data.
-    
+
 
     verbose : bool, optional
         If set, print basic CG convergence metric.
-    
+
     ofile_template : str
         If provided, write Wiener-filtered map to disk. May contain
         {idx} in path of filename, e.g. "/path/to/sim_{idx}.fits".
-
+    
     Returns
     -------
-
+    icov_alm : (npol, nelem) complex array
     '''
 
     if (two_level_cg or two_level_mg) and no_masked_prec:
         raise ValueError(f'Cannot have both two_level_prec and no_masked_prec')
-    
+
     solver.reset_preconditioner()
     solver.set_b_vec(imap)
-       
+
     if two_level_cg:
         solver.add_preconditioner(
             get_2level_prec(prec_main, prec_masked_cg, solver, two_level_cg))
@@ -464,7 +507,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
         solver.add_preconditioner(prec_base)
         if not no_masked_prec:
             solver.add_preconditioner(prec_masked_cg)
-            
+
     solver.init_solver()
 
     niter = niter_cg + niter_mg
@@ -479,7 +522,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
         solver.add_preconditioner(
             get_2level_prec(prec_main, prec_masked_mg, solver, two_level_mg,
                             sel_masked=np.s_[0]))
-    elif two_level_mg is None:            
+    elif two_level_mg is None:
         if not no_masked_prec:
             solver.add_preconditioner(prec_masked_mg, sel=np.s_[0])
 
@@ -492,7 +535,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     for idx in range(niter_cg, niter):
 
         solver.step()
-        if verbose:            
+        if verbose:
             print(solver.i, solver.err, f'rank : NOTIMPLEMENTED')
 
     #if save_wiener:
@@ -501,7 +544,17 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     #    write_counter[0] += 1
     #    hp.write_alm(opj(opath, filename), solver.x, overwrite=True)
 
-    return solver.get_icov()
+    icov_out = solver.get_icov()
+    npol = icov_out.shape[0]
+    
+    if npol == 2:
+        # We have E, B. Only want E.
+        oslice = slice(0, 1)
+    elif npol == 3:
+        # We have I, E, B. Only want T, E.
+        oslice = slice(0, 2)
+        
+    return icov_out[oslice]
 
 def draw_noise_wav(minfo, seed, dtype=np.float64, sqrt_cov_wav_op=None,
                    sqrt_n_op=None, fkernels=None):
@@ -594,6 +647,9 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
     alm = draw_signal_alm(
         sqrt_cov_ell_op, ainfo, rng, type_utils.to_complex(dtype))
 
+    # Npol of alm should be either 1 (=T), 2 (=E, B) or 3 (=T, E, B).
+    alm = icov_opts['solver'].lens(alm)
+
     alm_c_utils.lmul(alm, b_ell, ainfo, inplace=True)
     omap = np.zeros((alm.shape[0], minfo.npix), dtype=dtype)
     sht.alm2map(alm, omap, ainfo, minfo, spin)
@@ -609,7 +665,7 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
 
     return compute_icov(omap, **icov_opts)
 
-def compute_icov_alm(alm, icov_opts):
+def compute_icov_alm(alm, pslice, icov_opts):
     '''
     Inverse-covariance filter a set of alm coefficients by
     first applying the P projection matrix (d_pix = P slm + n).
@@ -618,6 +674,9 @@ def compute_icov_alm(alm, icov_opts):
     ----------
     alm : (npol, nelem) complex array
         Input alms.
+    pslice : slice
+        Slice into I, E, B that describes how input sits in
+        an I, E, B vector.
     icov_opts : dict
         Keyword arguments for `compute_icov`.
 
@@ -625,9 +684,28 @@ def compute_icov_alm(alm, icov_opts):
     -------
     oalm : (npol, nelem)
         Inverse-covariance filtered alms.
+
+    Notes
+    -----
+    In case this function is called with just E-mode vector,
+    pslice should be slice(1, 3), in which case an extra zero vector
+    will be concatenated for B. In case input is T, E, pslice should
+    be (0, 3). Again a zero vector will be concatenated. If input is
+    just T, pslice should be (0, 1) and no extra vector is needed.
     '''
 
-    omap = icov_opts['solver'].proj(alm)
+    npol = alm.shape[0]
+    
+    # Append zero B if needed.
+    npol_ext = slice2len(pslice)
+
+    if npol < npol_ext:
+        alm_ext = np.zeros((npol_ext, alm.shape[-1]), dtype=alm.dtype)
+        alm_ext[:npol] = alm
+    else:
+        alm_ext = alm
+    
+    omap = icov_opts['solver'].proj(alm_ext)
 
     return compute_icov(omap, **icov_opts)
 
@@ -656,8 +734,6 @@ def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None,
     if icov_noise_ell is None:
         return icov_signal_ell.copy()
 
-    icov_noise_ell = mat_utils.matpow(n_ell, -1)
-
     if b_ell is not None:
         b_ell = b_ell * np.eye(b_ell.shape[0])[:,:,np.newaxis]
         in_mat = np.einsum(
@@ -665,10 +741,10 @@ def get_itotcov_ell(icov_signal_ell, icov_noise_ell=None,
     else:
         in_mat = icov_noise_ell
 
-    imat = mat_utils.matpow(icov_ell + in_mat, -1)
+    imat = mat_utils.matpow(icov_signal_ell + in_mat, -1)
     itotcov_ell = np.einsum('ijl, jkl -> ikl', imat, in_mat)
-    itotcov_ell = np.einsum('ijl, jkl -> ikl', icov_ell, itotcov_ell)
-    
+    itotcov_ell = np.einsum('ijl, jkl -> ikl', icov_signal_ell, itotcov_ell)
+
     return itotcov_ell
 
 def compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
@@ -700,7 +776,7 @@ def compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
         # S^-1(S^-1 + bN^-1b)^-1bN^-1b
         b_ell = b_ell * np.eye(b_ell.shape[0])[:,:,np.newaxis]
         ibell = mat_utils.matpow(b_ell, -1)
-        alm_c_utils.lmul(alm, ibell, ainfo, inplace=inplace)    
+        alm_c_utils.lmul(alm, ibell, ainfo, inplace=inplace)
 
     alm = alm_c_utils.lmul(alm, itotcov_ell, ainfo, inplace=inplace)
 
@@ -720,7 +796,7 @@ def compute_icov_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
     ainfo : curvedsky.alm_info object.
         Metainfo alms.
     spin : int or array-like
-        Spin values for spherical harmonic transforms, should match npol. 
+        Spin values for spherical harmonic transforms, should match npol.
     itotcov_ell : (npol, npol, nell) array
         Isotropic total inverse covariance.
     b_ell : (npol, nell) array, optional
@@ -743,7 +819,7 @@ def compute_icov_iso(imap, minfo, ainfo, spin, itotcov_ell, b_ell=None):
 
 def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     '''
-    Write results from estimate_fnl to text file file.
+    Write results from estimate_fnl to text file.
 
     Parameters
     ----------
@@ -765,8 +841,8 @@ def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     fnls = np.asarray(fnls)
     cubics = np.asarray(cubics)
     lin_terms = np.asarray(lin_terms)
-    fishers = np.asarray(fishers)    
-    
+    fishers = np.asarray(fishers)
+
     niter = idxs.size
 
     if lin_terms.size == 1:
@@ -781,10 +857,74 @@ def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     mat2save[:,2] = cubics
     mat2save[:,3] = lin_terms
     mat2save[:,4] = fishers
-        
+
     header = f'fnl_mean = {np.mean(fnls):+.17e}, fnl_std = {np.std(fnls):+.17e}\n'
     header += '{:8s}\t{:24s}\t{:24s}\t{:24s}\t{:24s}'.format(
         'idx', 'fnl', 'cubic', 'lin_term', 'fisher')
 
     fmt = ['%9d', '%+.17e', '%+.17e','%+.17e', '%+.17e']
     np.savetxt(ofile, mat2save, fmt=fmt, delimiter='\t', header=header)
+
+def write_fisher(ofile, lmaxs, fishers):
+    '''
+    Write results from estimate_fisher to text file.
+
+    Parameters
+    ----------
+    ofile : str
+        Path to output txt file. Will be overwritten!
+    lmaxs : (niter) int array
+        Lmax values.
+    fishers : (niter) array
+        Fisher information. For debuggin purpose, is allowed to vary per estimate.
+    '''
+
+    lmaxs = np.asarray(lmaxs)
+    fishers = np.asarray(fishers)
+
+    niter = lmaxs.size
+
+    mat2save = np.zeros((niter, 2))
+    mat2save[:,0] = lmaxs
+    mat2save[:,1] = fishers
+
+    header = '{:8s}\t{:24s}'.format(
+        'lmax', 'fisher')
+
+    fmt = ['%9d', '%+.17e']
+    np.savetxt(ofile, mat2save, fmt=fmt, delimiter='\t', header=header)
+    
+def load_alm(ipath, pslice, lmax=None, dtype=np.complex128):
+    '''
+    Load alms from disk.
+
+    Parameters
+    ----------
+    ipath : str
+        Path to .fits file.
+    pslice : slice
+        Slice into first dimension of alms.
+    lmax : int, optional
+        Truncate up to this lmax.
+    dtype : type, optional
+        Cast loaded file to this dtype.
+
+    Returns
+    -------
+    alm : (npol, nelem) complex array
+        Loaded alms.
+    ainfo : curvedsky.alm_info object
+        Metainfo alms.
+    '''
+
+    hdu = np.arange(1, 100)[pslice]
+    alm = np.asarray(hp.read_alm(ipath, hdu=hdu))
+
+    ainfo = curvedsky.alm_info(hp.Alm.getlmax(alm.shape[-1]))
+
+    if lmax:
+        alm, ainfo = alm_utils.trunc_alm(alm, ainfo, lmax)
+
+    alm = alm.astype(dtype, copy=False)
+
+    return alm, ainfo

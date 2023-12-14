@@ -1,3 +1,5 @@
+# Same as estimate_mc but start from reading state
+# have option to load single map, load several maps or generate maps.
 import os
 import argparse
 
@@ -19,6 +21,8 @@ if __name__ == '__main__':
         'the estimator normalization and linear term.')
 
     # IO.
+    parser.add_argument("--imap_files", type=str, nargs='+',
+        help='Input maps from which fnl is estimated.')    
     parser.add_argument("--odir", required=True, type=str,
         help='Output directory.')
     parser.add_argument("--red-bisp-file", type=str, required=True,
@@ -53,8 +57,6 @@ if __name__ == '__main__':
         help='Use isotropic icov weighting instead of CG.')
     parser.add_argument("--single", action='store_true',
         help='Use single precision.')
-    parser.add_argument("--seed", default=0, type=int,
-        help='Global seed from which each simulation derives its seed.')
 
     # Filtering.
     parser.add_argument("--optweight-niter-cg", type=int, default=5,
@@ -81,22 +83,16 @@ if __name__ == '__main__':
         help='Print convergence to stdout')
 
     # KSW.
-    parser.add_argument("--ksw-niter", type=int, default=100,
-        help='Number of simulations used for Monte-Carlo quantities.')
     parser.add_argument("--ksw-theta-batch", type=int, default=100,
         help='Number of theta rings processed jointly. Increase to improve '\
              'speed at the cost of higher memory consumption. Make sure this '\
              'number exceeds the number of threads.')
-    parser.add_argument("--ksw-state-file", type=str,
-        help="Path to state .hdf5 file to restart from.")
-    parser.add_argument("--ksw-state-dump", type=int,
-        help='Write intermediate state to disk afer this number of steps (or close '\
-        'to it. Note, will really write after floor(nsteps / nranks) * nranks).')
+    parser.add_argument("--ksw-state-file", type=str, required=True,
+        help="Path to state .hdf5 file used to build the normalization and linear term.")
     parser.add_argument("--ksw-verbose", action='store_true',
         help='Print feedback to stdout')
     args = parser.parse_args()
 
-    # ADD DEBUG OPTION TO WRITE MAPS AFTER EACH CG RUN.
     if comm.rank == 0:
         print(args)
 
@@ -231,13 +227,6 @@ if __name__ == '__main__':
             no_masked_prec=args.optweight_no_masked_prec)
 
         wav_noise_opts = {}
-        
-    # Unique to each rank. Just here to keep track of number of maps written.
-    # THIS SHOULD BE UNIQUE NUMBER FOR EACH RANK. ALSO HOW CAN YOU DISTINGUISH
-    # BETWEEN MC_GT AND DATA ALMS? IF YOU ADD A template string to dict that
-    # is supposed to be the output, you could do alm_wiener_{idx} and mc_gt_wiener{idx}.
-    # idx can be given by the rng entropy? or the filename?
-    write_counter = np.asarray([0])
 
     icov_opts = dict(solver=solver, prec_base=prec_base,
                      prec_masked_cg=prec_masked_cg,
@@ -248,37 +237,34 @@ if __name__ == '__main__':
                      two_level_mg=args.optweight_2level_mg,                     
                      no_masked_prec=args.optweight_no_masked_prec,
                      verbose=args.optweight_verbose)
-                     #save_wiener=False, opath=None, write_counter=None)
 
-    alm_loader = lambda rng : script_utils.alm_loader_template(
-        rng, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
-        mask, dtype, sqrt_cov_pix_op=sqrt_cov_pix_op,
-        wav_noise_opts=wav_noise_opts, icov_opts=icov_opts)
+    ############### up to here all seems the same???
+    def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts):
+        '''
+        '''
+
+        imap = enmap.read_map(ipath)[iquslice]
+        imap = imap.astype(dtype, copy=False)
+        imap = map_utils.view_1d(imap, minfo)
+        
+        return script_utils.compute_icov(imap, **icov_opts)
+
+    alm_loader = lambda ipath : alm_loader_template(
+        ipath, iquslice, dtype, minfo, icov_opts)
 
     icov = lambda alm : script_utils.compute_icov_alm(alm, iquslice, icov_opts)
 
     rb = ksw.ReducedBispectrum.init_from_file(args.red_bisp_file)
 
     estimator = ksw.KSW([rb], icov, lmax, pol, precision=precision)
-    if args.ksw_state_file is not None:
-        estimator.start_from_read_state(args.ksw_state_file, comm=comm)
+    estimator.start_from_read_state(args.ksw_state_file, comm=comm)
 
-    seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
 
-    if args.ksw_state_dump:
-        dump_batch = np.floor(args.ksw_state_dump, comm.size) * comm.size
-    else:
-        # Default to no intermediate saves.
-        dump_batch = args.ksw_niter
+    fisher = estimator.compute_fisher()
+    fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
+        alm_loader, args.imap_files, comm=comm, fisher=fisher,
+        theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)
 
-    for start in range(estimator.mc_idx, estimator.mc_idx + args.ksw_niter, dump_batch):
-
-        estimator.step_batch(alm_loader, seeds[start:start+dump_batch],
-                             comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-
-        #IF VERBOSE
-        # LOG MC_GT_SQ to get some idea of convergence.
-
-        estimator.write_state(opj(fnldir, f'state_{estimator.mc_idx}'), comm=comm)
-
-    print(estimator.compute_fisher())
+    if comm.rank == 0:
+        script_utils.write_fnl(opj(fnldir, 'estimates.txt'), np.arange(len(args.imap_files)),
+                               fnls, cubics, lin_terms, fishers)

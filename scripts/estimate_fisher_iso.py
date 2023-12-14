@@ -16,14 +16,10 @@ opj = os.path.join
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
-        description='Estimate fnl assuming diagonal covariance matrix. No Monte-Carlo '\
-        'quantities are computed, so fast, but suboptimal in presence of mask or '\
+        description='Estimate fisher assuming diagonal covariance matrix. No Monte-Carlo '\
+        'quantities are computed, so fast, but unrealistic presence of mask or '\
         'anisotropic noise covariance.')
     # IO.
-    parser.add_argument("--imap_files", type=str, nargs='+',
-        help='Input maps from which fnl is estimated.')
-    parser.add_argument("--ialm_files", type=str, nargs='+',
-        help='Input alms from which fnl is estimated.')
     parser.add_argument("--odir", required=True, type=str,
         help='Output directory.')    
     parser.add_argument("--red-bisp-file", type=str, required=True,
@@ -39,23 +35,17 @@ if __name__ == '__main__':
     parser.add_argument("--beam-file", type=str,
         help='Path to beam .txt file. Alternative to beam-fwhm.')
 
-    # Estimation.
+    # Fisher.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
         help='Only use temperature data.')
     parser.add_argument("--E-only", dest='e_only', action='store_true',
         help='Only use temperature data.')
     parser.add_argument("--single", action='store_true',
         help='Use single precision.')
-    parser.add_argument("--seed", default=0, type=int,
-        help='Global seed from which each simulation derives its seed.')
     
     # KSW.
-    parser.add_argument("--ksw-lmax", type=int,
+    parser.add_argument("--ksw-lmax", type=int, nargs='+',
         help='Maximum multipole used in the estimator.')
-    parser.add_argument("--ksw-theta-batch", type=int, default=100,
-        help='Number of theta rings processed jointly. Increase to improve '\
-             'speed at the cost of higher memory consumption. Make sure this '\
-             'number exceeds the number of threads.')    
     parser.add_argument("--ksw-verbose", action='store_true',
         help='Print feedback to stdout')
     args = parser.parse_args()
@@ -76,19 +66,16 @@ if __name__ == '__main__':
         
     if args.t_only:
         pol = ['T']
-        spin = 0
         pslice = slice(0, 1, None)
         no_te = True
         if args.e_only:
             raise ValueError('Cannot have both T and E-only.')
     elif args.e_only:
         pol = ['E']
-        spin = 0
         pslice = slice(1, 2, None)
         no_te = True
     else:
         pol = ['T', 'E']
-        spin = 0
         pslice = slice(0, 2, None)
         no_te = False
 
@@ -99,8 +86,8 @@ if __name__ == '__main__':
         dtype = np.float64
         precision = 'double'
 
-    if args.imap_files is not None:
-        raise NotImplementedError
+    lmax_array = np.asarray(args.ksw_lmax)
+    lmax_max = lmax_array.max()
         
     if args.beam_file is not None:
         raise NotImplementedError
@@ -110,77 +97,42 @@ if __name__ == '__main__':
     else:
         b_ell = None
 
-    ainfo = curvedsky.alm_info(args.ksw_lmax)
     if args.signal_ps_file is not None:
         if args.signal_cov_file is not None:
             raise ValueError('Cannot have both signal ps and cov files.')
         cov_ell = script_utils.process_signal_spectra(
             np.loadtxt(args.signal_ps_file, skiprows=1, usecols=[1, 2, 3, 4]).T,
-            args.ksw_lmax, no_te=no_te, dtype=dtype)
+            lmax_max, no_te=no_te, dtype=dtype)
     elif args.signal_cov_file is not None:
         cov_ell = np.load(args.signal_cov_file)
     else:
         raise ValueError('Signal ps or cov file is needed.')
     cov_ell = script_utils.slice_spectrum(
-        cov_ell, pslice, lmax=args.ksw_lmax, lmin=2)
-    sqrt_cov_ell_op = operators.EllMatVecAlm(
-        ainfo, cov_ell, power=0.5)    
+        cov_ell, pslice, lmax=lmax_max, lmin=2)
     icov_ell = mat_utils.matpow(cov_ell, -1)
 
     if args.noise_cov_file:
         cov_noise_ell = np.load(args.noise_cov_file)
         cov_noise_ell = script_utils.slice_spectrum(
-            cov_noise_ell, pslice, lmax=args.ksw_lmax)
+            cov_noise_ell, pslice, lmax=lmax_max)
         icov_noise_ell = mat_utils.matpow(cov_noise_ell, -1)
     else:
         icov_noise_ell = None
 
-    def alm_loader_template(
-            ipath, pslice, itotcov_ell, lmax, dtype, b_ell=None):
-        '''
-        Template function for loading alms from disk and filtering them.
-
-        Parameters
-        ----------
-        ipath : str
-            Path to alm file.
-        pslice : slice
-            Slice into alm file.
-        itotcov_ell : (npol, npol, nell) array
-            Isotropic inverse covariance matrix.
-        lmax : int
-            Truncate laoded alms to this lmax.
-        b_ell : (npol, nell) array, optional
-            Beam transfer function.
-        
-        Returns
-        -------
-        alm : (npol, nelem) complex array
-            Loaded, sliced and filtered alm.
-        '''
-
-        alm, ainfo = script_utils.load_alm(
-            ipath, pslice, lmax=lmax, dtype=type_utils.to_complex(dtype))
-        
-        return script_utils.compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
-
     itotcov_ell = script_utils.get_itotcov_ell(
         icov_ell, icov_noise_ell=icov_noise_ell, b_ell=b_ell)
 
-    alm_loader = lambda ipath : alm_loader_template(
-        ipath, pslice, itotcov_ell, args.ksw_lmax, dtype, b_ell=b_ell)
-    icov = lambda alm : script_utils.compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=b_ell)
-
     rb = ksw.ReducedBispectrum.init_from_file(args.red_bisp_file)
+    
+    fisher_array = np.zeros(lmax_array.size)
+    for lidx, lmax in enumerate(lmax_array):
+    
+        estimator = ksw.KSW([rb], None, lmax, pol, precision=precision)
+        itotcov_ell_trunc = np.ascontiguousarray(itotcov_ell[:,:,:lmax+1])
+        fisher_array[lidx] = estimator.compute_fisher_isotropic(
+            itotcov_ell_trunc, return_matrix=False, comm=comm)
 
-    estimator = ksw.KSW([rb], icov, args.ksw_lmax, pol, precision=precision)
-
-    fisher = estimator.compute_fisher_isotropic(
-        itotcov_ell, return_matrix=False, comm=comm)
-    fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
-        alm_loader, args.ialm_files, comm=comm, fisher=fisher,
-        lin_term=0, theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)
-        
     if comm.rank == 0:
-        script_utils.write_fnl(opj(fnldir, 'estimates.txt'), np.arange(len(args.ialm_files)),
-                               fnls, cubics, lin_terms, fishers)
+        script_utils.write_fisher(
+            opj(fnldir, 'fisher_estimates.txt'), lmax_array, fisher_array)
+            
