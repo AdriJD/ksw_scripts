@@ -309,7 +309,6 @@ def process_cov_wav(cov_wav, nl2d, iquslice, dtype=np.float64):
 
     if len(cov_wav.preshape) == 4:
         # Remove excess dimensions.
-
         for key in cov_wav.maps:
             cov_wav.maps[key] = cov_wav.maps[key][0,:,0,:]
         cov_wav.preshape = cov_wav.maps[key].shape[:-1]
@@ -463,35 +462,48 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
     return solver, prec_base, prec_masked_cg, prec_masked_mg
 
 def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
-                 prec_masked_mg=None, niter_cg=0, two_level_cg=None,
-                 two_level_mg=None, niter_mg=0, no_masked_prec=False,
+                 prec_masked_mg=None, niter_cg=0,  niter_mg=0,
+                 two_level_cg=None, two_level_mg=None, no_masked_prec=False,
                  ofile_template=None, verbose=False):
-    #save_wiener=False, opath=None, write_counter=None):
     '''
-    Filter input map using CG solver.
+    Inverse-covariance filter input map using the conjugate gradient method.
 
     Parameters
     ----------
-
-    two_level_cg : str, optional
-    two_level_mg : str, optional
+    imap : (npol, npix) array
+        Input map.
+    solver : optweight.solvers.CGWienerMap instance
+        CG solver object.
+    prec_base : callable
+        The base preconditioner.
+    prec_masked_cg : callable, optional
+        Masked conjugate-gradient-based preconditioner.
+    prec_masked_mg : callable. optional
+        Masked multigrid-gradient-based preconditioner.    
     niter_cg : int
+        Number of CG steps with prec_masked_cg.
     niter_mg : int
+        Number of CG steps with prec_masked_mg.    
+    two_level_cg : str, optional
+        Type of 2-level precontioning using with CG masked preconditioner,
+        pick from "ADEF-1", "ADEF-2".    
+    two_level_mg : str, optional
+        Type of 2-level precontioning using with MG masked preconditioner,
+        pick from "ADEF-1", "ADEF-2".        
     no_masked_prec : float, optional
         If True, do not use the two masked preconditioners. Used for
         full sky data.
-
-
-    verbose : bool, optional
-        If set, print basic CG convergence metric.
-
     ofile_template : str
         If provided, write Wiener-filtered map to disk. May contain
-        {idx} in path of filename, e.g. "/path/to/sim_{idx}.fits".
+        {idx} in path of filename, e.g. "/path/to/sim_{idx}.fits".    
+    verbose : bool, optional
+        If set, print basic CG convergence metric.
     
     Returns
     -------
     icov_alm : (npol, nelem) complex array
+        Spherical harmonic coefficients of the tnverse-covariance filtered
+        input map.
     '''
 
     if (two_level_cg or two_level_mg) and no_masked_prec:
@@ -502,7 +514,8 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
 
     if two_level_cg:
         solver.add_preconditioner(
-            get_2level_prec(prec_main, prec_masked_cg, solver, two_level_cg))
+            preconditioners.get_2level_prec(
+                prec_main, prec_masked_cg, solver, two_level_cg))
     elif two_level_cg is None:
         solver.add_preconditioner(prec_base)
         if not no_masked_prec:
@@ -520,8 +533,9 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
 
     if two_level_mg:
         solver.add_preconditioner(
-            get_2level_prec(prec_main, prec_masked_mg, solver, two_level_mg,
-                            sel_masked=np.s_[0]))
+            preconditioners.get_2level_prec(
+                prec_main, prec_masked_mg, solver, two_level_mg,
+                sel_masked=np.s_[0]))
     elif two_level_mg is None:
         if not no_masked_prec:
             solver.add_preconditioner(prec_masked_mg, sel=np.s_[0])
@@ -559,7 +573,27 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
 def draw_noise_wav(minfo, seed, dtype=np.float64, sqrt_cov_wav_op=None,
                    sqrt_n_op=None, fkernels=None):
     '''
+    Draw a noise realization from a wavelet-based noise model.
 
+    Parameters
+    ----------
+    minfo : optweight.map_utils.MapInfo object
+        metainfo ouput map geometry.
+    seed : int or np.random._generator.Generator object, optional
+        Seed for np.random.seed.   
+    dtype : type, optional
+        Type for output map.
+    sqrt_cov_wav_op : callable
+        Function that applies square root wavelet of wavelet noise model.
+    sqrt_n_op : callable
+        Function that applied the square root of noise power spectrum.
+    fkernels : fkernel.FKernelSet object
+        Wavelet kernels.
+    
+    Returns
+    -------
+    omap : (npol, npix) array
+        Map with noise realization.
     '''
 
     rng = np.random.default_rng(seed)
@@ -582,19 +616,23 @@ def draw_noise_wav(minfo, seed, dtype=np.float64, sqrt_cov_wav_op=None,
 
 def draw_noise_pix(sqrt_cov_pix_op, minfo, seed, dtype):
     '''
-    Draw a noise realization from per-pixel noise model.
+    Draw a noise realization from a per-pixel noise model.
 
     Parameters
     ----------
-    sqrt_cov_pix_op :
-    minfo :
-    seed :
-    dtype :
+    sqrt_cov_pix_op : callable
+        Function that applies the square root of a pixel-based noise model.
+    minfo : optweight.map_utils.MapInfo object
+        metainfo ouput map geometry.
+    seed : int or np.random._generator.Generator object, optional
+        Seed for np.random.seed.   
+    dtype : type, optional
+        Type for output map.
 
     Returns
     -------
     omap : (npol, npix) array
-        Noise draw.
+        Map with noise realization.
     '''
 
     rng = np.random.default_rng(seed)
@@ -608,7 +646,23 @@ def draw_noise_pix(sqrt_cov_pix_op, minfo, seed, dtype):
 
 def draw_signal_alm(sqrt_cov_ell_op, ainfo, seed, dtype):
     '''
+    Draw a signal realization.
+    
+    Parameters
+    ----------
+    sqrt_cov_ell_op : callable
+        Function that applies the square root of the signal power spectrum.
+    ainfo : pixell.curvedsky.alm_info object
+        metainfo ouptut alm geometry.
+    seed : int or np.random._generator.Generator object, optional
+        Seed for np.random.seed.   
+    dtype : type, optional
+        Type for output alm.
 
+    Returns
+    -------
+    alm : (npol, npix) array
+        Spherical harmonic coefficients with signal realization.
     '''
 
     rng = np.random.default_rng(seed)
@@ -629,17 +683,34 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
 
     Parameters
     ----------
-    seed :
-    sqrt_cov_ell_op
-    b_ell
-    minfo
-    ainfo
-    spin
-    mask
-    dtype
-    sqrt_cov_pix_op
-    noise_wav_ops
-    icov_ops
+    seed : int or np.random._generator.Generator object, optional
+        Seed for np.random.seed.   
+    sqrt_cov_ell_op : callable
+        Function that applies the square root of the signal power spectrum.    
+    b_ell : (npol, nell)
+        Beam window function.
+    minfo : optweight.map_utils.MapInfo object
+        metainfo ouput map geometry.
+    ainfo : pixell.curvedsky.alm_info object
+        metainfo internal alm geometry.
+    spin : int or array-like
+        Spin values for spherical harmonic transforms, should match npol.
+    mask : (npol, npix) array
+        Pixel mask.    
+    dtype : type, optional
+        Type for output map.
+    sqrt_cov_pix_op : callable
+        Function that applies the square root of a pixel-based noise model.
+    wav_noise_opts : dict, optional
+        Keyword arguments to `draw_noise_wav`.
+    icov_opts : dict, optional
+        Keyword arguments to `compute_icov`.
+
+    Returns
+    -------
+    icov_alm : (npol, nelem) complex array
+        Spherical harmonic coefficients of the tnverse-covariance filtered
+        signal + noise realization.
     '''
 
     rng = np.random.default_rng(seed)
@@ -773,7 +844,7 @@ def compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
 
     if b_ell is not None:
         # Deconvolve beam because itotcov_ell already is
-        # S^-1(S^-1 + bN^-1b)^-1bN^-1b
+        # S^-1(S^-1 + B N^-1 B)^-1 B N^-1 B.
         b_ell = b_ell * np.eye(b_ell.shape[0])[:,:,np.newaxis]
         ibell = mat_utils.matpow(b_ell, -1)
         alm_c_utils.lmul(alm, ibell, ainfo, inplace=inplace)

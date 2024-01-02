@@ -17,8 +17,8 @@ opj = os.path.join
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
-        description='Estimate the Monte Carlo quantities needed for '\
-        'the estimator normalization and linear term.')
+        description='Estimate fnl for a set of input maps using a previously '\
+        'computed state file containing the necessary Monte Carlo quantities.')
 
     # IO.
     parser.add_argument("--imap_files", type=str, nargs='+',
