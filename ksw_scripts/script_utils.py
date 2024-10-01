@@ -464,7 +464,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
 def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
                  prec_masked_mg=None, niter_cg=0,  niter_mg=0,
                  two_level_cg=None, two_level_mg=None, no_masked_prec=False,
-                 ofile_template=None, verbose=False):
+                 ofile=None, slice_output=True, verbose=False):
     '''
     Inverse-covariance filter input map using the conjugate gradient method.
 
@@ -493,9 +493,11 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     no_masked_prec : float, optional
         If True, do not use the two masked preconditioners. Used for
         full sky data.
-    ofile_template : str
-        If provided, write Wiener-filtered map to disk. May contain
-        {idx} in path of filename, e.g. "/path/to/sim_{idx}.fits".    
+    ofile : str, optional
+        Path to filename. If provided, write Wiener-filtered map to disk
+        using this filename, e.g. "/path/to/sim.fits".
+    slice_output : bool
+        Slice the output alms based on input npol (i.e. discard B).
     verbose : bool, optional
         If set, print basic CG convergence metric.
     
@@ -552,22 +554,22 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
         if verbose:
             print(solver.i, solver.err, f'rank : NOTIMPLEMENTED')
 
-    #if save_wiener:
-    #    filename = opj(
-    #        opath, f'mc_gt_w_{write_counter[0]}.fits')
-    #    write_counter[0] += 1
-    #    hp.write_alm(opj(opath, filename), solver.x, overwrite=True)
-
+    if ofile is not None:
+        hp.write_alm(ofile, solver.x, overwrite=True)        
+    
     icov_out = solver.get_icov()
     npol = icov_out.shape[0]
-    
-    if npol == 2:
-        # We have E, B. Only want E.
-        oslice = slice(0, 1)
-    elif npol == 3:
-        # We have I, E, B. Only want T, E.
-        oslice = slice(0, 2)
-        
+
+    if slice_output:
+        if npol == 2:
+            # We have E, B. Only want E.
+            oslice = slice(0, 1)
+        elif npol == 3:
+            # We have I, E, B. Only want T, E.
+            oslice = slice(0, 2)
+    else:
+        oslice = np.s_[:]
+            
     return icov_out[oslice]
 
 def draw_noise_wav(minfo, seed, dtype=np.float64, sqrt_cov_wav_op=None,

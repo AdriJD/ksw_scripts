@@ -106,7 +106,7 @@ if __name__ == '__main__':
         raise NotImplementedError
     elif args.beam_fwhm:
         b_ell = script_utils.get_b_ell(
-            args.beam_fwhm, lmax_max, pslice, dtype=dtype)
+            args.beam_fwhm, args.ksw_lmax, pslice, dtype=dtype)
     else:
         b_ell = None
 

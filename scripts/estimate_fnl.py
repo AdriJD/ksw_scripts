@@ -51,8 +51,6 @@ if __name__ == '__main__':
         help='Only use temperature data.')
     parser.add_argument("--E-only", dest='e_only', action='store_true',
         help='Only use temperature data.')
-    parser.add_argument("--save-wiener", action='store_true',
-        help='Save wiener filtered mc_gt alms from each rank for debugging.')
     parser.add_argument("--iso-weight", action='store_true',
         help='Use isotropic icov weighting instead of CG.')
     parser.add_argument("--single", action='store_true',
@@ -81,7 +79,9 @@ if __name__ == '__main__':
         help='Custom lmax for lensing SH coefficients.')    
     parser.add_argument("--optweight-verbose", action='store_true',
         help='Print convergence to stdout')
-
+    parser.add_argument("--optweight-save-wiener", action='store_true',
+        help='Save wiener filtered alms from each rank for debugging.')
+    
     # KSW.
     parser.add_argument("--ksw-theta-batch", type=int, default=100,
         help='Number of theta rings processed jointly. Increase to improve '\
@@ -99,12 +99,14 @@ if __name__ == '__main__':
     imgdir = opj(args.odir, 'img')
     logdir = opj(args.odir, 'log')
     fnldir = opj(args.odir, 'fnl')
+    debugdir = opj(args.odir, 'debug')
 
     if comm.Get_rank() == 0:
         os.makedirs(args.odir, exist_ok=True)
         os.makedirs(imgdir, exist_ok=True)
         os.makedirs(logdir, exist_ok=True)
         os.makedirs(fnldir, exist_ok=True)
+        os.makedirs(debugdir, exist_ok=True)        
 
     if args.t_only:
         pol = ['T']
@@ -146,7 +148,7 @@ if __name__ == '__main__':
         else:
             fwhm = args.beam_fwhm
         b_ell = script_utils.get_b_ell(
-            args.beam_fwhm, lmax_max, pslice, dtype=dtype)
+            fwhm, lmax, iquslice, dtype=dtype)
         
     ainfo = curvedsky.alm_info(lmax)
     if args.signal_ps_file is not None:
@@ -199,7 +201,7 @@ if __name__ == '__main__':
                               sqrt_n_op=sqrt_n_op,
                               fkernels=fkernels)
 
-        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utuls.init_solver(
+        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utils.init_solver(
             ainfo, minfo, icov_ell, b_ell, mask, spin,
             cov_wav=cov_wav, fkernels=fkernels, cov_noise_2d=nl2d,
             itau_ell=icov_noise_ell, swap_bm=args.optweight_swap_bm,
@@ -239,18 +241,23 @@ if __name__ == '__main__':
                      verbose=args.optweight_verbose)
 
     ############### up to here all seems the same???
-    def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts):
+    def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts, save_wiener=False):
         '''
         '''
 
         imap = enmap.read_map(ipath)[iquslice]
         imap = imap.astype(dtype, copy=False)
         imap = map_utils.view_1d(imap, minfo)
+
+        if save_wiener:
+            ofile = os.path.splitext(os.path.split(ipath)[-1])[0]
+            ofile = opj(debugdir, f'{ofile}.fits')
+            icov_opts.update(dict(ofile=ofile))
         
         return script_utils.compute_icov(imap, **icov_opts)
 
     alm_loader = lambda ipath : alm_loader_template(
-        ipath, iquslice, dtype, minfo, icov_opts)
+        ipath, iquslice, dtype, minfo, icov_opts, save_wiener=args.optweight_save_wiener)
 
     icov = lambda alm : script_utils.compute_icov_alm(alm, iquslice, icov_opts)
 
@@ -258,7 +265,6 @@ if __name__ == '__main__':
 
     estimator = ksw.KSW([rb], icov, lmax, pol, precision=precision)
     estimator.start_from_read_state(args.ksw_state_file, comm=comm)
-
 
     fisher = estimator.compute_fisher()
     fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(

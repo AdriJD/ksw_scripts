@@ -150,7 +150,7 @@ if __name__ == '__main__':
         else:
             fwhm = args.beam_fwhm
         b_ell = script_utils.get_b_ell(
-            args.beam_fwhm, lmax_max, pslice, dtype=dtype)
+            fwhm, lmax, iquslice, dtype=dtype)
         
     ainfo = curvedsky.alm_info(lmax)
     if args.signal_ps_file is not None:
