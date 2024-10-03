@@ -41,4 +41,9 @@ if __name__ == '__main__':
 
     cosmo.add_ttt_lensing_bispectrum()
     rb = cosmo.red_bispectra[0]
+    rb.write(opj(args.odir, f'isw_lens_ttt_lmax{args.lmax}'))
+
+    cosmo.add_lensing_bispectrum()
+    rb = cosmo.red_bispectra[1]
     rb.write(opj(args.odir, f'isw_lens_lmax{args.lmax}'))
+    

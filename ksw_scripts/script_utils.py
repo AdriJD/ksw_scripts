@@ -567,6 +567,9 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
         elif npol == 3:
             # We have I, E, B. Only want T, E.
             oslice = slice(0, 2)
+
+        elif npol == 1:
+            oslice = np.s_[:]
     else:
         oslice = np.s_[:]
             
