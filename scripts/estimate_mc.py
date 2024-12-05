@@ -219,7 +219,7 @@ if __name__ == '__main__':
             raise ValueError(f'Mask : {shape[-2:]=}, {wcs=} '\
                              f'icov : {icov.shape[-2:]=} {icov.wcs=}')
 
-        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice)
+        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)
         icov_pix = map_utils.view_1d(icov_pix, minfo)
         sqrt_cov_pix_op = operators.PixMatVecMap(
             icov_pix, power=-0.5, inplace=True)

@@ -517,7 +517,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     if two_level_cg:
         solver.add_preconditioner(
             preconditioners.get_2level_prec(
-                prec_main, prec_masked_cg, solver, two_level_cg))
+                prec_base, prec_masked_cg, solver, two_level_cg))
     elif two_level_cg is None:
         solver.add_preconditioner(prec_base)
         if not no_masked_prec:
@@ -536,7 +536,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
     if two_level_mg:
         solver.add_preconditioner(
             preconditioners.get_2level_prec(
-                prec_main, prec_masked_mg, solver, two_level_mg,
+                prec_base, prec_masked_mg, solver, two_level_mg,
                 sel_masked=np.s_[0]))
     elif two_level_mg is None:
         if not no_masked_prec:
