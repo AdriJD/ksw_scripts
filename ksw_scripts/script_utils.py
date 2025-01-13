@@ -365,7 +365,8 @@ def process_icov_pix(icov_pix, iquslice, dtype=np.float64):
 def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
                 spin, icov_pix=None, cov_wav=None, fkernels=None,
                 cov_noise_2d=None, itau_ell=None, swap_bm=False,
-                scale_a=False, lensop=None, no_masked_prec=False):
+                scale_a=False, lensop=None, no_masked_prec=False,
+                use_prec_harm=False):
     '''
     Initialize CG solver and preconditioners.
 
@@ -405,6 +406,9 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
     no_masked_prec : float, optional
         If True, do not use the two masked preconditioners. Used for
         full sky data.
+    use_prec_harm : bool, optional
+        If True, use the harmonic preconditioner as the base preconditioner for
+        the case where the noise covariance is diagonal in pixel space.
 
     Returns
     -------
@@ -435,8 +439,14 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
             draw_constr=False, spin=spin, swap_bm=swap_bm, sfilt=sfilt,
             lensop=lensop)
 
-        prec_base = preconditioners.PseudoInvPreconditioner(
-            ainfo, icov_ell, icov_pix, minfo, spin, b_ell=b_ell, sfilt=sfilt)
+        if use_prec_harm:
+            prec_base = preconditioners.HarmonicPreconditioner(
+                ainfo, icov_ell, b_ell=b_ell, sfilt=sfilt, mask_pix=mask,
+                minfo=minfo, icov_pix=icov_pix)
+        else:
+            prec_base = preconditioners.PseudoInvPreconditioner(
+                ainfo, icov_ell, icov_pix, minfo, spin, b_ell=b_ell, sfilt=sfilt)
+        
 
     elif icov_wav is not None:
         solver = solvers.CGWienerMap.from_arrays_fwav(
@@ -455,7 +465,8 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
 
         prec_masked_mg = preconditioners.MaskedPreconditioner(
             ainfo, icov_ell[0:1,0:1], 0, mask[0].astype(bool), minfo,
-            min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg, sfilt=sfilt)
+            min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg,
+            sfilt=None if not scale_a else sfilt[0:1,0:1])
     else:
         prec_masked_cg, prec_masked_mg = None, None
 

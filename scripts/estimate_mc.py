@@ -79,6 +79,9 @@ if __name__ == '__main__':
         help='Custom lmax for lensing SH coefficients.')    
     parser.add_argument("--optweight-verbose", action='store_true',
         help='Print convergence to stdout')
+    parser.add_argument("--optweight-use-prec-harm", action='store_true',
+        help='Use the harmonic preconditioner as the base preconditioner for '\
+        'pixel-based noise model instead of the preudo-inverse preconditioner')
 
     # KSW.
     parser.add_argument("--ksw-niter", type=int, default=100,
@@ -228,7 +231,8 @@ if __name__ == '__main__':
             ainfo, minfo, icov_ell, b_ell, mask, spin,
             icov_pix=icov_pix, swap_bm=args.optweight_swap_bm,
             scale_a=args.optweight_scale_a, lensop=lensop,
-            no_masked_prec=args.optweight_no_masked_prec)
+            no_masked_prec=args.optweight_no_masked_prec,
+            use_prec_harm=args.optweight_use_prec_harm)
 
         wav_noise_opts = {}
         
@@ -273,12 +277,16 @@ if __name__ == '__main__':
 
     for start in range(estimator.mc_idx, estimator.mc_idx + args.ksw_niter, dump_batch):
 
-        estimator.step_batch(alm_loader, seeds[start:start+dump_batch],
-                             comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
+        #estimator.step_batch(alm_loader, seeds[start:start+dump_batch],
+        #                     comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
 
+        estimator.step_batch_new(alm_loader, seeds[start:start+dump_batch],
+                             comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
+        
         #IF VERBOSE
         # LOG MC_GT_SQ to get some idea of convergence.
 
-        estimator.write_state(opj(fnldir, f'state_{estimator.mc_idx}'), comm=comm)
+        #estimator.write_state(opj(fnldir, f'state_{estimator.mc_idx}'), comm=comm)
 
-    print(estimator.compute_fisher())
+    #print(estimator.compute_fisher())
+    print(estimator.compute_fisher_new(comm))    
