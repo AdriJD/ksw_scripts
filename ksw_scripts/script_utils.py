@@ -77,14 +77,14 @@ def process_mask(mask, iquslice):
 
     Parameters
     ----------
-    mask : (npol, ny, nx) or (ny, nx) enmap
+    mask : (npol, npix) or (npix) array
         Input mask.
     iquslice : slice
         Slice into IQU axis.
 
     Returns
     -------
-    mask_bool : (npol, ny, nx)
+    mask_bool : (npol, npix)
         Boolean mask, True for good pixels. 
 
     Raises
@@ -102,7 +102,7 @@ def process_mask(mask, iquslice):
     mask[mask >= 0.5] = 1
     mask = mask.astype(bool)
 
-    mask = mat_utils.atleast_nd(mask, 3)
+    mask = mat_utils.atleast_nd(mask, 2)
     npol = mask.shape[0]
 
     if npol not in (1, 3):
@@ -111,7 +111,7 @@ def process_mask(mask, iquslice):
     if npol == 3:
         mask = np.ascontiguousarray(mask[iquslice])
     elif npol == 1:        
-        mask = mask * np.ones(slice2len(iquslice))[:,np.newaxis,np.newaxis]
+        mask = mask * np.ones(slice2len(iquslice))[:,np.newaxis]
         
     return mask
 
@@ -332,14 +332,14 @@ def process_icov_pix(icov_pix, iquslice, dtype=np.float64):
 
     Parameters
     ----------
-    icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap
+    icov_pix : (npol_in, npol_in, npix) or (npol, npix) array
         Per-pixel inverse covariance matrix.
     iquslice : slice, optional
         Slice into I, Q, U axis.
 
     Returns
     -------
-    icov_pix : (npol_in, npol_in, ny, nx) or (npol, ny, nx) enmap
+    icov_pix : (npol_in, npol_in, npix) or (npol, npix) array
         Sliced and recasted inverse covariance matrix.
 
     Raises
@@ -348,7 +348,7 @@ def process_icov_pix(icov_pix, iquslice, dtype=np.float64):
         If input is not IQU.
     '''
 
-    icov_pix = mat_utils.atleast_nd(icov_pix, 3)
+    icov_pix = mat_utils.atleast_nd(icov_pix, 2)
 
     if icov_pix.shape[0] != 3:
         raise ValueError(f'{icov_pix.shape=}, npol is not 3.')

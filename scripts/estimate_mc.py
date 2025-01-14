@@ -30,9 +30,11 @@ if __name__ == '__main__':
     parser.add_argument("--noise-cov-file", type=str,
         help='Path to .npy file with (3, 3, nell) noise power spectrum [C_ell].')
     parser.add_argument("--mask-file", required=True, type=str,
-        help='Path to boolean mask (True for good data), either T or TQU.')
+        help='Path to boolean mask (True for good data), either T or TQU. If .fits'\
+              'file, assume enmap, if .hdf5 file assume Gauss-Legendre map.')
     parser.add_argument("--icov-pix-file", type=str,
-        help='Path to per-pixel inverse covariance enmap .fits file')
+        help='Path to per-pixel inverse covariance enmap .fits file. If .fits'\
+             'file, assume enmap, if .hdf5 file assume Gauss-Legendre map.')
     parser.add_argument("--cov-wav-file", type=str,
         help='Path to wavelet covariance .hdf5 file.')
     parser.add_argument("--fkernelset-file",
@@ -138,11 +140,14 @@ if __name__ == '__main__':
         dtype = np.float64
         precision = 'double'
 
-    mask = enmap.read_map(args.mask_file)
-    shape, wcs = mask.shape[-2:], mask.wcs
-    mask = script_utils.process_mask(mask, iquslice)
-    minfo = script_utils.find_minfo(mask.shape, mask.wcs)
-    mask = map_utils.view_1d(mask, minfo)
+    try:
+        mask = enmap.read_fits(args.mask_file)
+    except OSError:
+        mask, minfo = map_utils.read_map(args.mask_file)
+    else:        
+        minfo = script_utils.find_minfo(mask.shape, mask.wcs)
+        mask = map_utils.view_1d(mask, minfo)        
+    mask = script_utils.process_mask(mask, iquslice)    
     lmax = map_utils.minfo2lmax(minfo)
 
     if args.beam_file is not None:
@@ -206,7 +211,7 @@ if __name__ == '__main__':
                               sqrt_n_op=sqrt_n_op,
                               fkernels=fkernels)
 
-        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utuls.init_solver(
+        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utils.init_solver(
             ainfo, minfo, icov_ell, b_ell, mask, spin,
             cov_wav=cov_wav, fkernels=fkernels, cov_noise_2d=nl2d,
             itau_ell=icov_noise_ell, swap_bm=args.optweight_swap_bm,
@@ -217,13 +222,18 @@ if __name__ == '__main__':
 
     elif args.icov_pix_file:
 
-        icov_pix = enmap.read_map(args.icov_pix_file)
-        if icov_pix.shape[-2:] != shape or not wcsutils.equal(icov_pix.wcs, wcs):
-            raise ValueError(f'Mask : {shape[-2:]=}, {wcs=} '\
-                             f'icov : {icov.shape[-2:]=} {icov.wcs=}')
+        try:
+            icov_pix = enmap.read_fits(args.icov_pix_file)
+        except OSError:
+            icov_pix, minfo_icov = map_utils.read_map(args.icov_pix_file)            
+        else:
+            minfo_icov = script_utils.find_minfo(icov_pix.shape, icov_pix.wcs)            
+            icov_pix = map_utils.view_1d(icov_pix, minfo)
 
-        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)
-        icov_pix = map_utils.view_1d(icov_pix, minfo)
+        if not map_utils.minfo_is_equiv(minfo, minfo_icov):
+            raise ValueError('Mask geometry does not match icov_pix geometry.')
+            
+        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)            
         sqrt_cov_pix_op = operators.PixMatVecMap(
             icov_pix, power=-0.5, inplace=True)
 
