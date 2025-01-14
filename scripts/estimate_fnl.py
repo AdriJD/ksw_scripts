@@ -22,7 +22,7 @@ if __name__ == '__main__':
 
     # IO.
     parser.add_argument("--imap_files", type=str, nargs='+',
-        help='Input maps from which fnl is estimated.')    
+        help='Input maps from which fnl is estimated.')
     parser.add_argument("--odir", required=True, type=str,
         help='Output directory.')
     parser.add_argument("--red-bisp-file", type=str, required=True,
@@ -34,9 +34,11 @@ if __name__ == '__main__':
     parser.add_argument("--noise-cov-file", type=str,
         help='Path to .npy file with (3, 3, nell) noise power spectrum [C_ell].')
     parser.add_argument("--mask-file", required=True, type=str,
-        help='Path to boolean mask (True for good data), either T or TQU.')
+        help='Path to boolean mask (True for good data), either T or TQU. If .fits'\
+              'file, assume enmap, if .hdf5 file assume Gauss-Legendre map.')
     parser.add_argument("--icov-pix-file", type=str,
-        help='Path to per-pixel inverse covariance enmap .fits file')
+        help='Path to per-pixel inverse covariance enmap .fits file. If .fits'\
+             'file, assume enmap, if .hdf5 file assume Gauss-Legendre map.')
     parser.add_argument("--cov-wav-file", type=str,
         help='Path to wavelet covariance .hdf5 file.')
     parser.add_argument("--fkernelset-file",
@@ -76,12 +78,12 @@ if __name__ == '__main__':
     parser.add_argument("--optweight-plm-file", type=str,
         help='Path to file containing phi_lm (and possibly omega_lm) SH coefficients')
     parser.add_argument("--optweight-plm-lmax", type=int,
-        help='Custom lmax for lensing SH coefficients.')    
+        help='Custom lmax for lensing SH coefficients.')
     parser.add_argument("--optweight-verbose", action='store_true',
         help='Print convergence to stdout')
     parser.add_argument("--optweight-save-wiener", action='store_true',
         help='Save wiener filtered alms from each rank for debugging.')
-    
+
     # KSW.
     parser.add_argument("--ksw-theta-batch", type=int, default=100,
         help='Number of theta rings processed jointly. Increase to improve '\
@@ -106,7 +108,7 @@ if __name__ == '__main__':
         os.makedirs(imgdir, exist_ok=True)
         os.makedirs(logdir, exist_ok=True)
         os.makedirs(fnldir, exist_ok=True)
-        os.makedirs(debugdir, exist_ok=True)        
+        os.makedirs(debugdir, exist_ok=True)
 
     if args.t_only:
         pol = ['T']
@@ -133,11 +135,14 @@ if __name__ == '__main__':
         dtype = np.float64
         precision = 'double'
 
-    mask = enmap.read_map(args.mask_file)
-    shape, wcs = mask.shape[-2:], mask.wcs
+    try:
+        mask = enmap.read_fits(args.mask_file)
+    except OSError:
+        mask, minfo = map_utils.read_map(args.mask_file)
+    else:
+        minfo = script_utils.find_minfo(mask.shape, mask.wcs)
+        mask = map_utils.view_1d(mask, minfo)
     mask = script_utils.process_mask(mask, iquslice)
-    minfo = script_utils.find_minfo(mask.shape, mask.wcs)
-    mask = map_utils.view_1d(mask, minfo)
     lmax = map_utils.minfo2lmax(minfo)
 
     if args.beam_file is not None:
@@ -149,7 +154,7 @@ if __name__ == '__main__':
             fwhm = args.beam_fwhm
         b_ell = script_utils.get_b_ell(
             fwhm, lmax, iquslice, dtype=dtype)
-        
+
     ainfo = curvedsky.alm_info(lmax)
     if args.signal_ps_file is not None:
         if args.signal_cov_file is not None:
@@ -173,7 +178,7 @@ if __name__ == '__main__':
         lensop = lensing.LensAlm(plm, ainfo_lens, ainfo)
     else:
         lensop = None
-    
+
     if args.noise_cov_file:
         cov_noise_ell = np.load(args.noise_cov_file)
         cov_noise_ell = script_utils.slice_spectrum(
@@ -212,13 +217,18 @@ if __name__ == '__main__':
 
     elif args.icov_pix_file:
 
-        icov_pix = enmap.read_map(args.icov_pix_file)
-        if icov_pix.shape[-2:] != shape or not wcsutils.equal(icov_pix.wcs, wcs):
-            raise ValueError(f'Mask : {shape[-2:]=}, {wcs=} '\
-                             f'icov : {icov.shape[-2:]=} {icov.wcs=}')
+        try:
+            icov_pix = enmap.read_fits(args.icov_pix_file)
+        except OSError:
+            icov_pix, minfo_icov = map_utils.read_map(args.icov_pix_file)
+        else:
+            minfo_icov = script_utils.find_minfo(icov_pix.shape, icov_pix.wcs)
+            icov_pix = map_utils.view_1d(icov_pix, minfo)
+
+        if not map_utils.minfo_is_equiv(minfo, minfo_icov):
+            raise ValueError('Mask geometry does not match icov_pix geometry.')
 
         icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)
-        icov_pix = map_utils.view_1d(icov_pix, minfo)
         sqrt_cov_pix_op = operators.PixMatVecMap(
             icov_pix, power=-0.5, inplace=True)
 
@@ -236,7 +246,7 @@ if __name__ == '__main__':
                      niter_cg=args.optweight_niter_cg,
                      niter_mg=args.optweight_niter_mg,
                      two_level_cg=args.optweight_2level_cg,
-                     two_level_mg=args.optweight_2level_mg,                     
+                     two_level_mg=args.optweight_2level_mg,
                      no_masked_prec=args.optweight_no_masked_prec,
                      verbose=args.optweight_verbose)
 
@@ -245,15 +255,25 @@ if __name__ == '__main__':
         '''
         '''
 
-        imap = enmap.read_map(ipath)[iquslice]
+        try:
+            imap = enmap.read_fits(ipath)
+        except OSError:
+            imap, minfo_imap = map_utils.read_map(ipath)
+        else:
+            minfo_imap = script_utils.find_minfo(imap.shape, imap.wcs)
+            imap = map_utils.view_1d(imap, minfo)
+
+        if not map_utils.minfo_is_equiv(minfo, minfo_imap):
+            raise ValueError('Mask geometry does not match imap geometry.')
+
+        imap = imap[iquslice]
         imap = imap.astype(dtype, copy=False)
-        imap = map_utils.view_1d(imap, minfo)
 
         if save_wiener:
             ofile = os.path.splitext(os.path.split(ipath)[-1])[0]
             ofile = opj(debugdir, f'{ofile}.fits')
             icov_opts.update(dict(ofile=ofile))
-        
+
         return script_utils.compute_icov(imap, **icov_opts)
 
     alm_loader = lambda ipath : alm_loader_template(

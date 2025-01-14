@@ -78,7 +78,7 @@ if __name__ == '__main__':
     parser.add_argument("--optweight-plm-file", type=str,
         help='Path to file containing phi_lm (and possibly omega_lm) SH coefficients')
     parser.add_argument("--optweight-plm-lmax", type=int,
-        help='Custom lmax for lensing SH coefficients.')    
+        help='Custom lmax for lensing SH coefficients.')
     parser.add_argument("--optweight-verbose", action='store_true',
         help='Print convergence to stdout')
     parser.add_argument("--optweight-use-prec-harm", action='store_true',
@@ -144,10 +144,10 @@ if __name__ == '__main__':
         mask = enmap.read_fits(args.mask_file)
     except OSError:
         mask, minfo = map_utils.read_map(args.mask_file)
-    else:        
+    else:
         minfo = script_utils.find_minfo(mask.shape, mask.wcs)
-        mask = map_utils.view_1d(mask, minfo)        
-    mask = script_utils.process_mask(mask, iquslice)    
+        mask = map_utils.view_1d(mask, minfo)
+    mask = script_utils.process_mask(mask, iquslice)
     lmax = map_utils.minfo2lmax(minfo)
 
     if args.beam_file is not None:
@@ -159,7 +159,7 @@ if __name__ == '__main__':
             fwhm = args.beam_fwhm
         b_ell = script_utils.get_b_ell(
             fwhm, lmax, iquslice, dtype=dtype)
-        
+
     ainfo = curvedsky.alm_info(lmax)
     if args.signal_ps_file is not None:
         if args.signal_cov_file is not None:
@@ -183,7 +183,7 @@ if __name__ == '__main__':
         lensop = lensing.LensAlm(plm, ainfo_lens, ainfo)
     else:
         lensop = None
-    
+
     if args.noise_cov_file:
         cov_noise_ell = np.load(args.noise_cov_file)
         cov_noise_ell = script_utils.slice_spectrum(
@@ -225,15 +225,15 @@ if __name__ == '__main__':
         try:
             icov_pix = enmap.read_fits(args.icov_pix_file)
         except OSError:
-            icov_pix, minfo_icov = map_utils.read_map(args.icov_pix_file)            
+            icov_pix, minfo_icov = map_utils.read_map(args.icov_pix_file)
         else:
-            minfo_icov = script_utils.find_minfo(icov_pix.shape, icov_pix.wcs)            
+            minfo_icov = script_utils.find_minfo(icov_pix.shape, icov_pix.wcs)
             icov_pix = map_utils.view_1d(icov_pix, minfo)
 
         if not map_utils.minfo_is_equiv(minfo, minfo_icov):
             raise ValueError('Mask geometry does not match icov_pix geometry.')
-            
-        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)            
+
+        icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)
         sqrt_cov_pix_op = operators.PixMatVecMap(
             icov_pix, power=-0.5, inplace=True)
 
@@ -245,7 +245,7 @@ if __name__ == '__main__':
             use_prec_harm=args.optweight_use_prec_harm)
 
         wav_noise_opts = {}
-        
+
     # Unique to each rank. Just here to keep track of number of maps written.
     # THIS SHOULD BE UNIQUE NUMBER FOR EACH RANK. ALSO HOW CAN YOU DISTINGUISH
     # BETWEEN MC_GT AND DATA ALMS? IF YOU ADD A template string to dict that
@@ -259,7 +259,7 @@ if __name__ == '__main__':
                      niter_cg=args.optweight_niter_cg,
                      niter_mg=args.optweight_niter_mg,
                      two_level_cg=args.optweight_2level_cg,
-                     two_level_mg=args.optweight_2level_mg,                     
+                     two_level_mg=args.optweight_2level_mg,
                      no_masked_prec=args.optweight_no_masked_prec,
                      verbose=args.optweight_verbose)
                      #save_wiener=False, opath=None, write_counter=None)
@@ -292,11 +292,11 @@ if __name__ == '__main__':
 
         estimator.step_batch_new(alm_loader, seeds[start:start+dump_batch],
                              comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-        
+
         #IF VERBOSE
         # LOG MC_GT_SQ to get some idea of convergence.
 
         #estimator.write_state(opj(fnldir, f'state_{estimator.mc_idx}'), comm=comm)
 
     #print(estimator.compute_fisher())
-    print(estimator.compute_fisher_new(comm))    
+    print(estimator.compute_fisher_new(comm))
