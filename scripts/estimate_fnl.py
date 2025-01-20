@@ -284,9 +284,8 @@ if __name__ == '__main__':
     rb = ksw.ReducedBispectrum.init_from_file(args.red_bisp_file)
 
     estimator = ksw.KSW([rb], icov, lmax, pol, precision=precision)
-    estimator.start_from_read_state(args.ksw_state_file, comm=comm)
+    fisher = estimator.start_from_read_state_2pass(args.ksw_state_file, comm=comm)
 
-    fisher = estimator.compute_fisher()
     fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
         alm_loader, args.imap_files, comm=comm, fisher=fisher,
         theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)

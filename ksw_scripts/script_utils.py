@@ -353,9 +353,9 @@ def process_icov_pix(icov_pix, iquslice, dtype=np.float64):
     if icov_pix.shape[0] != 3:
         raise ValueError(f'{icov_pix.shape=}, npol is not 3.')
     
-    if icov_pix.ndim == 3:
+    if icov_pix.ndim == 2:
         icov_pix = icov_pix[iquslice].astype(dtype, copy=True)
-    elif icov_pix.ndim == 4:
+    elif icov_pix.ndim == 3:
         icov_pix = icov_pix[iquslice,iquslice].astype(dtype, copy=True)
     else:
         raise ValueError(f'{icov_pix.shape=} not supported')

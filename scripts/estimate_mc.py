@@ -94,9 +94,6 @@ if __name__ == '__main__':
              'number exceeds the number of threads.')
     parser.add_argument("--ksw-state-file", type=str,
         help="Path to state .hdf5 file to restart from.")
-    parser.add_argument("--ksw-state-dump", type=int,
-        help='Write intermediate state to disk afer this number of steps (or close '\
-        'to it. Note, will really write after floor(nsteps / nranks) * nranks).')
     parser.add_argument("--ksw-verbose", action='store_true',
         help='Print feedback to stdout')
     args = parser.parse_args()
@@ -278,25 +275,11 @@ if __name__ == '__main__':
         estimator.start_from_read_state(args.ksw_state_file, comm=comm)
 
     seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
+    estimator.step_batch_2pass(
+        alm_loader, seeds, comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
 
-    if args.ksw_state_dump:
-        dump_batch = np.floor(args.ksw_state_dump, comm.size) * comm.size
-    else:
-        # Default to no intermediate saves.
-        dump_batch = args.ksw_niter
-
-    for start in range(estimator.mc_idx, estimator.mc_idx + args.ksw_niter, dump_batch):
-
-        #estimator.step_batch(alm_loader, seeds[start:start+dump_batch],
-        #                     comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-
-        estimator.step_batch_new(alm_loader, seeds[start:start+dump_batch],
-                             comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-
-        #IF VERBOSE
-        # LOG MC_GT_SQ to get some idea of convergence.
-
-        #estimator.write_state(opj(fnldir, f'state_{estimator.mc_idx}'), comm=comm)
-
-    #print(estimator.compute_fisher())
-    print(estimator.compute_fisher_new(comm))
+    fisher = estimator.compute_fisher_2pass(comm)
+    if comm.rank == 0:
+        print(f'{fisher=}')
+    estimator.write_state_2pass(
+        opj(fnldir, f'state_{estimator.mc_idx}'), fisher, comm=comm)
