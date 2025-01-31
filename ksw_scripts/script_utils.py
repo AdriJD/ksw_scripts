@@ -566,7 +566,7 @@ def compute_icov(imap, solver=None, prec_base=None, prec_masked_cg=None,
             print(solver.i, solver.err, f'rank : NOTIMPLEMENTED')
 
     if ofile is not None:
-        hp.write_alm(ofile, solver.x, overwrite=True)        
+        hp.write_alm(ofile, solver.get_wiener(), overwrite=True)        
     
     icov_out = solver.get_icov()
     npol = icov_out.shape[0]

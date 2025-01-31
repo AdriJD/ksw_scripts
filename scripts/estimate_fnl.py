@@ -21,8 +21,13 @@ if __name__ == '__main__':
         'computed state file containing the necessary Monte Carlo quantities.')
 
     # IO.
-    parser.add_argument("--imap_files", type=str, nargs='+',
+    parser.add_argument("--imap-files", type=str, nargs='+',
         help='Input maps from which fnl is estimated.')
+    parser.add_argument("--imap-indices", type=int, nargs='+',
+        help='Indices of input map files, see --imap-file-template.')
+    parser.add_argument("--imap-file-template", type=str,
+        help='Template of imap file names that can be parsed as python string '\
+             'and contains "{idx}". For example: "/path/to/sim_{idx:03d}.fits"')    
     parser.add_argument("--odir", required=True, type=str,
         help='Output directory.')
     parser.add_argument("--red-bisp-file", type=str, required=True,
@@ -47,6 +52,8 @@ if __name__ == '__main__':
         help='FWHM in arcmin used for the beam.')
     parser.add_argument("--beam-file", type=str,
         help='Path to beam .txt file. Alternative to beam-fwhm. Either T or TEB.')
+    parser.add_argument("--mask-imap", action='store_true',
+        help='Apply the mask to the input maps (so assume maps are unmasked).')
 
     # Estimation.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
@@ -77,6 +84,8 @@ if __name__ == '__main__':
         help='Do not use preconditioners for masked pixels, used for full sky data.')
     parser.add_argument("--optweight-plm-file", type=str,
         help='Path to file containing phi_lm (and possibly omega_lm) SH coefficients')
+    parser.add_argument("--optweight-plm-file-template", type=str,
+        help='Same as --imap-file-template but for lensing plm files.')    
     parser.add_argument("--optweight-plm-lmax", type=int,
         help='Custom lmax for lensing SH coefficients.')
     parser.add_argument("--optweight-verbose", action='store_true',
@@ -110,6 +119,19 @@ if __name__ == '__main__':
         os.makedirs(fnldir, exist_ok=True)
         os.makedirs(debugdir, exist_ok=True)
 
+    if args.imap_files is not None and args.imap_indices is not None:
+        raise ValueError('Cannot have both --imap-files and --imap-indices')
+    
+    if (args.imap_indices is None) != (args.imap_file_template is None):
+        raise ValueError('--imap-file-template requires --imap-indices')
+    
+    if args.optweight_plm_file and args.optweight_plm_file_template:
+        raise ValueError('Cannot have both optweight-plm-file-template and '\
+                         'optweight-plm-file-template')
+
+    if args.optweight_plm_file_template and args.imap_indices is None:
+        raise ValueError('--optweight-plm-file-template requires --imap-indices')
+    
     if args.t_only:
         pol = ['T']
         spin = 0
@@ -251,14 +273,60 @@ if __name__ == '__main__':
                      verbose=args.optweight_verbose)
 
     ############### up to here all seems the same???
-    def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts, save_wiener=False):
+    def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts, save_wiener=False,
+                            imap_file_template=None, plm_file_template=None, plm_lmax=None,
+                            mask_imap=False):
         '''
+        Load up an input map (and potentially a set of lensing potential alms),
+        initialize the CG solver and return inverse-covariance filtered data.
+
+        Parameters
+        ----------
+        ipath : str or int
+            Either a filename or a index.
+        iquslice : slice
+            Slice into IQU axis.
+        dtype : type
+            Convert loaded input to this type.
+        minfo : optweight.map_utils.MapInfo object
+            Metainfo mask and imap.
+        icov_opts : dict
+            Keyword arguments to script_utils.compute_icov.
+        save_wiener : bool, optional
+            Write Wiener-filtered map to disk (only for debugging).
+        imap_file_template : str, optional
+            Filename template, used in combination with integer `ipath`.
+        plm_file_template : str, optional
+            Filename template for lensing potential.
+        plm_lmax : int, opional
+            Custom lmax for lensing SH coefficients.
+        mask_imap : bool, optional
+            If True, apply mask to input maps.
+        
+        Returns
+        -------
+        icov_alm : (npol, nelem) complex array
+            Spherical harmonic coefficients of the tnverse-covariance filtered
+            input map.        
         '''
 
+        if isinstance(ipath, str):
+            filename = ipath
+        elif int(ipath) == ipath:
+            # Index instead of str.
+            filename = imap_file_template.format(idx=ipath)
+            try:
+                filename_plm = plm_file_template.format(idx=ipath)
+            except AttributeError:
+                filename_plm = None
+        else:
+            raise ValueError(f'{ipath=} not understood')
+
+        print(f'Loading {filename}')        
         try:
-            imap = enmap.read_fits(ipath)
+            imap = enmap.read_fits(filename)
         except OSError:
-            imap, minfo_imap = map_utils.read_map(ipath)
+            imap, minfo_imap = map_utils.read_map(filename)
         else:
             minfo_imap = script_utils.find_minfo(imap.shape, imap.wcs)
             imap = map_utils.view_1d(imap, minfo)
@@ -269,15 +337,28 @@ if __name__ == '__main__':
         imap = imap[iquslice]
         imap = imap.astype(dtype, copy=False)
 
+        if mask_imap:
+            imap *= mask
+        
+        if plm_file_template and filename_plm is not None:
+            print(f'Loading {filename_plm}')            
+            plm, ainfo_lens = script_utils.load_alm(
+                filename_plm, slice(0, 1), lmax=plm_lmax)
+            lensop = lensing.LensAlm(plm, ainfo_lens, ainfo)
+            icov_opts['solver'].set_lens((lensop.lens, lensop.lens_adjoint))
+
         if save_wiener:
-            ofile = os.path.splitext(os.path.split(ipath)[-1])[0]
+            ofile = os.path.splitext(os.path.split(filename)[-1])[0]
             ofile = opj(debugdir, f'{ofile}.fits')
             icov_opts.update(dict(ofile=ofile))
 
         return script_utils.compute_icov(imap, **icov_opts)
 
     alm_loader = lambda ipath : alm_loader_template(
-        ipath, iquslice, dtype, minfo, icov_opts, save_wiener=args.optweight_save_wiener)
+        ipath, iquslice, dtype, minfo, icov_opts, save_wiener=args.optweight_save_wiener,
+        imap_file_template=args.imap_file_template,
+        plm_file_template=args.optweight_plm_file_template, plm_lmax=args.optweight_plm_lmax,
+        mask_imap=args.mask_imap)
 
     icov = lambda alm : script_utils.compute_icov_alm(alm, iquslice, icov_opts)
 
@@ -286,10 +367,15 @@ if __name__ == '__main__':
     estimator = ksw.KSW([rb], icov, lmax, pol, precision=precision)
     fisher = estimator.start_from_read_state_2pass(args.ksw_state_file, comm=comm)
 
+    if args.imap_file_template:
+        imap_files = args.imap_indices
+    else:
+        imap_files = args.imap_files
+        
     fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
-        alm_loader, args.imap_files, comm=comm, fisher=fisher,
+        alm_loader, imap_files, comm=comm, fisher=fisher,
         theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)
 
     if comm.rank == 0:
-        script_utils.write_fnl(opj(fnldir, 'estimates.txt'), np.arange(len(args.imap_files)),
+        script_utils.write_fnl(opj(fnldir, 'estimates.txt'), np.arange(len(imap_files)),
                                fnls, cubics, lin_terms, fishers)
