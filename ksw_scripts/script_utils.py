@@ -735,6 +735,7 @@ def alm_loader_template(seed, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
         sqrt_cov_ell_op, ainfo, rng, type_utils.to_complex(dtype))
 
     # Npol of alm should be either 1 (=T), 2 (=E, B) or 3 (=T, E, B).
+    # If no lensing template is given, the below operation does nothing.
     alm = icov_opts['solver'].lens(alm)
 
     alm_c_utils.lmul(alm, b_ell, ainfo, inplace=True)
