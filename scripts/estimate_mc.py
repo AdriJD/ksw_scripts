@@ -3,7 +3,7 @@ import argparse
 
 import numpy as np
 from mpi4py import MPI
-from optweight import map_utils, operators, wavtrans, mat_utils, fkernel, lensing
+from optweight import map_utils, operators, wavtrans, mat_utils, fkernel, lensing, sht
 from pixell import enmap, wcsutils, curvedsky
 import ksw
 
@@ -43,7 +43,7 @@ if __name__ == '__main__':
         help='FWHM in arcmin used for the beam.')
     parser.add_argument("--beam-file", type=str,
         help='Path to beam .txt file. Alternative to beam-fwhm. Either T or TEB.')
-
+    
     # Estimation.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
         help='Only use temperature data.')
@@ -84,7 +84,12 @@ if __name__ == '__main__':
     parser.add_argument("--optweight-use-prec-harm", action='store_true',
         help='Use the harmonic preconditioner as the base preconditioner for '\
         'pixel-based noise model instead of the preudo-inverse preconditioner')
-
+    parser.add_argument("--optweight-niter-noise-cg", type=int, default=6,
+        help='Number of CG steps used to invert constant-correlation noise model.')
+    parser.add_argument("--optweight-no-masked-noise", action='store_true',
+        help='If set, assume that the noise has not been masked, i.e. M in the the noise '\
+            'model is set to 1. Only relevant when constant-correlation noise model is used.')
+    
     # KSW.
     parser.add_argument("--ksw-niter", type=int, default=100,
         help='Number of simulations used for Monte-Carlo quantities.')
@@ -231,15 +236,36 @@ if __name__ == '__main__':
             raise ValueError('Mask geometry does not match icov_pix geometry.')
 
         icov_pix = script_utils.process_icov_pix(icov_pix, iquslice, dtype=dtype)
-        sqrt_cov_pix_op = operators.PixMatVecMap(
-            icov_pix, power=-0.5, inplace=True)
 
+        if icov_noise_ell is not None:            
+            sqrt_cov_pix_op = None
+
+            ell_op = operators.EllMatVecAlm(
+                ainfo, icov_noise_ell, power=-0.5)
+            pix_op = operators.PixMatVecMap(
+                icov_pix, power=-0.5, inplace=True)            
+            #sqrt_cov_noise_ell_op = lambda x: pix_op(ell_op(x))
+            def sqrt_cov_noise_ell_op_full(ialm, ainfo, minfo, spin):
+                oalm = ell_op(ialm)
+                noise = np.zeros((ialm.shape[0], minfo.npix))
+                sht.alm2map(oalm, noise, ainfo, minfo, spin)
+                return pix_op(noise)
+            sqrt_cov_noise_ell_op = lambda x: sqrt_cov_noise_ell_op_full(
+                x, ainfo, minfo, spin)
+                
+        else:
+            sqrt_cov_pix_op = operators.PixMatVecMap(
+                icov_pix, power=-0.5, inplace=True)
+            sqrt_cov_noise_ell_op = None        
+        
         solver, prec_base, prec_masked_cg, prec_masked_mg = script_utils.init_solver(
             ainfo, minfo, icov_ell, b_ell, mask, spin,
             icov_pix=icov_pix, swap_bm=args.optweight_swap_bm,
             scale_a=args.optweight_scale_a, lensop=lensop,
             no_masked_prec=args.optweight_no_masked_prec,
-            use_prec_harm=args.optweight_use_prec_harm)
+            use_prec_harm=args.optweight_use_prec_harm,
+            icov_noise_ell=icov_noise_ell, no_masked_noise=args.optweight_no_masked_noise,
+            nsteps_noise_cg=args.optweight_niter_noise_cg)
 
         wav_noise_opts = {}
 
@@ -262,8 +288,9 @@ if __name__ == '__main__':
                      #save_wiener=False, opath=None, write_counter=None)
 
     alm_loader = lambda rng : script_utils.alm_loader_template(
-        rng, sqrt_cov_ell_op, b_ell,  minfo, ainfo, spin,
+        rng, sqrt_cov_ell_op, script_utils.slice2len(iquslice), b_ell, minfo, ainfo, spin,
         mask, dtype, sqrt_cov_pix_op=sqrt_cov_pix_op,
+        sqrt_cov_noise_ell_op=sqrt_cov_noise_ell_op,
         wav_noise_opts=wav_noise_opts, icov_opts=icov_opts)
 
     icov = lambda alm : script_utils.compute_icov_alm(alm, iquslice, icov_opts)
