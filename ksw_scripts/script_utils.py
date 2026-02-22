@@ -980,10 +980,10 @@ def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     niter = idxs.size
 
     if lin_terms.size == 1:
-        lin_terms *= np.ones(niter)
+        lin_terms = lin_terms * np.ones(niter)
 
     if fishers.size == 1:
-        fishers *= np.ones(fishers)
+        fishers = fishers * np.ones(niter)
 
     mat2save = np.zeros((niter, 5))
     mat2save[:,0] = idxs

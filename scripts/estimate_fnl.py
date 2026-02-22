@@ -100,6 +100,8 @@ if __name__ == '__main__':
     parser.add_argument("--optweight-no-masked-noise", action='store_true',
         help='If set, assume that the noise has not been masked, i.e. M in the the noise '\
              'model is set to 1. Only relevant when constant-correlation noise model is used.')
+    parser.add_argument("--optweight-no-te", action='store_true',
+        help='If set, remove the TE correlation from the signal spectrum that is loaded.')
     
     # KSW.
     parser.add_argument("--ksw-theta-batch", type=int, default=100,
@@ -158,6 +160,9 @@ if __name__ == '__main__':
         iquslice = slice(0, 3, None)
         no_te = False
 
+    if args.optweight_no_te:
+        no_te = True        
+        
     if args.single:
         dtype = np.float32
         precision = 'single'

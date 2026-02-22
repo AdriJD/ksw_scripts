@@ -43,14 +43,14 @@ if __name__ == '__main__':
         help='FWHM in arcmin used for the beam.')
     parser.add_argument("--beam-file", type=str,
         help='Path to beam .txt file. Alternative to beam-fwhm. Either T or TEB.')
+    parser.add_argument("--write-grad-t", action='store_true',
+        help='If set, store the grad T alms in the debug directory.')
     
     # Estimation.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
         help='Only use temperature data.')
     parser.add_argument("--E-only", dest='e_only', action='store_true',
         help='Only use temperature data.')
-    parser.add_argument("--save-wiener", action='store_true',
-        help='Save wiener filtered mc_gt alms from each rank for debugging.')
     parser.add_argument("--iso-weight", action='store_true',
         help='Use isotropic icov weighting instead of CG.')
     parser.add_argument("--single", action='store_true',
@@ -89,6 +89,8 @@ if __name__ == '__main__':
     parser.add_argument("--optweight-no-masked-noise", action='store_true',
         help='If set, assume that the noise has not been masked, i.e. M in the the noise '\
             'model is set to 1. Only relevant when constant-correlation noise model is used.')
+    parser.add_argument("--optweight-no-te", action='store_true',
+        help='If set, remove the TE correlation from the signal spectrum that is loaded.')
     
     # KSW.
     parser.add_argument("--ksw-niter", type=int, default=100,
@@ -110,7 +112,8 @@ if __name__ == '__main__':
     imgdir = opj(args.odir, 'img')
     logdir = opj(args.odir, 'log')
     fnldir = opj(args.odir, 'fnl')
-
+    debugdir = opj(args.odir, 'debug')
+    
     if comm.Get_rank() == 0:
         os.makedirs(args.odir, exist_ok=True)
         os.makedirs(imgdir, exist_ok=True)
@@ -135,6 +138,9 @@ if __name__ == '__main__':
         iquslice = slice(0, 3, None)
         no_te = False
 
+    if args.optweight_no_te:
+        no_te = True
+        
     if args.single:
         dtype = np.float32
         precision = 'single'
@@ -304,7 +310,14 @@ if __name__ == '__main__':
     seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
     estimator.step_batch_2pass(
         alm_loader, seeds, comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
+    #estimator.step_batch_2pass(
+    #    alm_loader, seeds[estimate.mc_idx:], comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
 
+    # ADD DEBUG HERE?
+    # Save all gt maps... labeled by index.
+    #if args.write_grad_t:
+        
+    
     fisher = estimator.compute_fisher_2pass(comm)
     if comm.rank == 0:
         print(f'{fisher=}')
