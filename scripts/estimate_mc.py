@@ -45,6 +45,16 @@ if __name__ == '__main__':
         help='Path to beam .txt file. Alternative to beam-fwhm. Either T or TEB.')
     parser.add_argument("--write-grad-t", action='store_true',
         help='If set, store the grad T alms in the debug directory.')
+    parser.add_argument("--imap-files", type=str, nargs='+',
+        help='Input maps to estimate Monte-Carlo quantities from. If not given, maps '\
+             'will be generated from data model.')
+    parser.add_argument("--imap-indices", type=int, nargs='+',
+        help='Indices of input map files, see --imap-file-template.')
+    parser.add_argument("--imap-file-template", type=str,
+        help='Template of imap file names that can be parsed as python string '\
+             'and contains "{idx}". For example: "/path/to/sim_{idx:03d}.fits"')    
+    parser.add_argument("--mask-imap", action='store_true',
+        help='Apply the mask to the input maps (so assume maps are unmasked).')
     
     # Estimation.
     parser.add_argument("--T-only", dest='t_only', action='store_true',
@@ -120,6 +130,12 @@ if __name__ == '__main__':
         os.makedirs(logdir, exist_ok=True)
         os.makedirs(fnldir, exist_ok=True)
 
+    if args.imap_files is not None and args.imap_indices is not None:
+        raise ValueError('Cannot have both --imap-files and --imap-indices')
+    
+    if (args.imap_indices is None) != (args.imap_file_template is None):
+        raise ValueError('--imap-file-template requires --imap-indices')
+    
     if args.t_only:
         pol = ['T']
         spin = 0
@@ -181,8 +197,6 @@ if __name__ == '__main__':
         raise ValueError('Signal ps or cov file is needed.')
     cov_ell = script_utils.slice_spectrum(
         cov_ell, iquslice, lmax=lmax, lmin=2)
-    sqrt_cov_ell_op = operators.EllMatVecAlm(
-        ainfo, cov_ell, power=0.5)
     icov_ell = mat_utils.matpow(cov_ell, -1)
 
     if args.optweight_plm_file is not None:
@@ -293,11 +307,80 @@ if __name__ == '__main__':
                      verbose=args.optweight_verbose)
                      #save_wiener=False, opath=None, write_counter=None)
 
-    alm_loader = lambda rng : script_utils.alm_loader_template(
-        rng, sqrt_cov_ell_op, script_utils.slice2len(iquslice), b_ell, minfo, ainfo, spin,
-        mask, dtype, sqrt_cov_pix_op=sqrt_cov_pix_op,
-        sqrt_cov_noise_ell_op=sqrt_cov_noise_ell_op,
-        wav_noise_opts=wav_noise_opts, icov_opts=icov_opts)
+    # Depending on whether we're loading maps from disk or generating them from the data
+    # model, we need a different alm_loader.
+    if (args.imap_files is not None) or (args.imap_indices is not None):
+        
+        def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts,
+                                imap_file_template=None, mask_imap=False):
+            '''
+            Load up an input map (and potentially a set of lensing potential alms),
+            initialize the CG solver and return inverse-covariance filtered data.
+
+            Parameters
+            ----------
+            ipath : str or int
+                Either a filename or an index.
+            iquslice : slice
+                Slice into IQU axis.
+            dtype : type
+                Convert loaded input to this type.
+            minfo : optweight.map_utils.MapInfo object
+                Metainfo mask and imap.
+            icov_opts : dict
+                Keyword arguments to script_utils.compute_icov.
+            imap_file_template : str, optional
+                Filename template, used in combination with integer `ipath`.
+            mask_imap : bool, optional
+                If True, apply mask to input maps.
+
+            Returns
+            -------
+            icov_alm : (npol, nelem) complex array
+                Spherical harmonic coefficients of the inverse-covariance filtered
+                input map.        
+            '''
+
+            if isinstance(ipath, str):
+                filename = ipath
+            elif int(ipath) == ipath:
+                # Index instead of str.
+                filename = imap_file_template.format(idx=ipath)
+            else:
+                raise ValueError(f'{ipath=} not understood')
+
+            print(f'Loading {filename}')        
+            try:
+                imap = enmap.read_fits(filename)
+            except OSError:
+                imap, minfo_imap = map_utils.read_map(filename)
+            else:
+                minfo_imap = script_utils.find_minfo(imap.shape, imap.wcs)
+                imap = map_utils.view_1d(imap, minfo)
+
+            if not map_utils.minfo_is_equiv(minfo, minfo_imap):
+                raise ValueError('Mask geometry does not match imap geometry.')
+
+            imap = imap[iquslice]
+            imap = imap.astype(dtype, copy=False)
+
+            if mask_imap:
+                imap *= mask
+
+            return script_utils.compute_icov(imap, **icov_opts)
+
+        alm_loader = lambda ipath : alm_loader_template(
+            ipath, iquslice, dtype, minfo, icov_opts,
+            imap_file_template=args.imap_file_template, mask_imap=args.mask_imap)
+        
+    else:
+        sqrt_cov_ell_op = operators.EllMatVecAlm(
+            ainfo, cov_ell, power=0.5)        
+        alm_loader = lambda rng : script_utils.alm_loader_template(
+            rng, sqrt_cov_ell_op, script_utils.slice2len(iquslice), b_ell, minfo, ainfo, spin,
+            mask, dtype, sqrt_cov_pix_op=sqrt_cov_pix_op,
+            sqrt_cov_noise_ell_op=sqrt_cov_noise_ell_op,
+            wav_noise_opts=wav_noise_opts, icov_opts=icov_opts)
 
     icov = lambda alm : script_utils.compute_icov_alm(alm, iquslice, icov_opts)
 
@@ -307,16 +390,15 @@ if __name__ == '__main__':
     if args.ksw_state_file is not None:
         estimator.start_from_read_state(args.ksw_state_file, comm=comm)
 
-    seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
-    estimator.step_batch_2pass(
-        alm_loader, seeds, comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-    #estimator.step_batch_2pass(
-    #    alm_loader, seeds[estimate.mc_idx:], comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)
-
-    # ADD DEBUG HERE?
-    # Save all gt maps... labeled by index.
-    #if args.write_grad_t:
+    if args.imap_file_template:
+        seeds = args.imap_indices
+    elif args.imap_files is not None:
+        seeds = args.imap_files
+    else:        
+        seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
         
+    estimator.step_batch_2pass(
+        alm_loader, seeds, comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)        
     
     fisher = estimator.compute_fisher_2pass(comm)
     if comm.rank == 0:
