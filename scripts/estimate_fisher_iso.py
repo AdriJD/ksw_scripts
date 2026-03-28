@@ -121,9 +121,9 @@ if __name__ == '__main__':
 
     itotcov_ell = script_utils.get_itotcov_ell(
         icov_ell, icov_noise_ell=icov_noise_ell, b_ell=b_ell)
-
+        
     rb = ksw.ReducedBispectrum.init_from_file(args.red_bisp_file)
-    
+
     fisher_array = np.zeros(lmax_array.size)
     for lidx, lmax in enumerate(lmax_array):
     

@@ -102,6 +102,9 @@ if __name__ == '__main__':
              'model is set to 1. Only relevant when constant-correlation noise model is used.')
     parser.add_argument("--optweight-no-te", action='store_true',
         help='If set, remove the TE correlation from the signal spectrum that is loaded.')
+    parser.add_argument("--optweight-iso-noise-cov-file", type=str,
+        help='Path to .npy file with (3, 3, nell) noise power spectrum [C_ell] used to compute '\
+            'initial guess for the solver')
     
     # KSW.
     parser.add_argument("--ksw-theta-batch", type=int, default=100,
@@ -214,6 +217,14 @@ if __name__ == '__main__':
     else:
         lensop = None
 
+    if args.optweight_iso_noise_cov_file:
+        cov_noise_iso_ell = np.load(args.optweight_iso_noise_cov_file)
+        cov_noise_iso_ell = script_utils.slice_spectrum(
+            cov_noise_iso_ell, iquslice, lmax=lmax)
+        icov_noise_iso_ell = mat_utils.matpow(cov_noise_iso_ell, -1, inplace=True)
+    else:
+        icov_noise_iso_ell = None
+        
     if args.noise_cov_file:
         cov_noise_ell = np.load(args.noise_cov_file)
         cov_noise_ell = script_utils.slice_spectrum(
@@ -241,12 +252,14 @@ if __name__ == '__main__':
                               sqrt_n_op=sqrt_n_op,
                               fkernels=fkernels)
 
-        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utils.init_solver(
-            ainfo, minfo, icov_ell, b_ell, mask, spin,
-            cov_wav=cov_wav, fkernels=fkernels, cov_noise_2d=nl2d,
-            itau_ell=icov_noise_ell, swap_bm=args.optweight_swap_bm,
-            scale_a=args.optweight_scale_a, lensop=lensop,
-            no_masked_prec=args.optweight_no_masked_prec)
+        solver, prec_base, prec_masked_cg, prec_masked_mg, init_guess_op = \
+            script_utils.init_solver(
+                ainfo, minfo, icov_ell, b_ell, mask, spin,
+                cov_wav=cov_wav, fkernels=fkernels, cov_noise_2d=nl2d,
+                itau_ell=icov_noise_ell, swap_bm=args.optweight_swap_bm,
+                scale_a=args.optweight_scale_a, lensop=lensop,
+                no_masked_prec=args.optweight_no_masked_prec,
+                icov_noise_iso_ell=icov_noise_iso_ell)
 
         sqrt_cov_pix_op = None
 
@@ -279,14 +292,16 @@ if __name__ == '__main__':
                 icov_pix, power=-0.5, inplace=True)
             sqrt_cov_noise_ell_op = None        
 
-        solver, prec_base, prec_masked_cg, prec_masked_mg = script_utils.init_solver(
-            ainfo, minfo, icov_ell, b_ell, mask, spin,
-            icov_pix=icov_pix, swap_bm=args.optweight_swap_bm,
-            scale_a=args.optweight_scale_a, lensop=lensop,
-            no_masked_prec=args.optweight_no_masked_prec,
-            use_prec_harm=args.optweight_use_prec_harm,
-            icov_noise_ell=icov_noise_ell, no_masked_noise=args.optweight_no_masked_noise,
-            nsteps_noise_cg=args.optweight_niter_noise_cg)
+        solver, prec_base, prec_masked_cg, prec_masked_mg, init_guess_op = \
+            script_utils.init_solver(
+                ainfo, minfo, icov_ell, b_ell, mask, spin,
+                icov_pix=icov_pix, swap_bm=args.optweight_swap_bm,
+                scale_a=args.optweight_scale_a, lensop=lensop,
+                no_masked_prec=args.optweight_no_masked_prec,
+                use_prec_harm=args.optweight_use_prec_harm,
+                icov_noise_ell=icov_noise_ell, no_masked_noise=args.optweight_no_masked_noise,
+                nsteps_noise_cg=args.optweight_niter_noise_cg,
+                icov_noise_iso_ell=icov_noise_iso_ell)
 
         wav_noise_opts = {}
 
@@ -298,7 +313,8 @@ if __name__ == '__main__':
                      two_level_cg=args.optweight_2level_cg,
                      two_level_mg=args.optweight_2level_mg,
                      no_masked_prec=args.optweight_no_masked_prec,
-                     verbose=args.optweight_verbose)
+                     verbose=args.optweight_verbose,
+                     init_guess_op=init_guess_op)
 
     ############### up to here all seems the same???
     def alm_loader_template(ipath, iquslice, dtype, minfo, icov_opts, save_wiener=False,
