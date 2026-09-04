@@ -132,6 +132,7 @@ if __name__ == '__main__':
         os.makedirs(imgdir, exist_ok=True)
         os.makedirs(logdir, exist_ok=True)
         os.makedirs(fnldir, exist_ok=True)
+        os.makedirs(debugdir, exist_ok=True)        
 
     if args.imap_files is not None and args.imap_indices is not None:
         raise ValueError('Cannot have both --imap-files and --imap-indices')
@@ -391,7 +392,7 @@ if __name__ == '__main__':
         
     else:
         sqrt_cov_ell_op = operators.EllMatVecAlm(
-            ainfo, cov_ell, power=0.5)        
+            ainfo, cov_ell, power=0.5)
         alm_loader = lambda rng : script_utils.alm_loader_template(
             rng, sqrt_cov_ell_op, script_utils.slice2len(iquslice), b_ell, minfo, ainfo, spin,
             mask, dtype, sqrt_cov_pix_op=sqrt_cov_pix_op,
@@ -412,9 +413,17 @@ if __name__ == '__main__':
         seeds = args.imap_files
     else:        
         seeds = np.random.SeedSequence(args.seed).spawn(args.ksw_niter + estimator.mc_idx)
+
+    if args.write_grad_t:
+        # This is a bit simplistic. If filenames are given, one would have to
+        # manually figure out the mapping from index to input file.
+        ofilenames = [opj(debugdir, f'grad_t_{i}.fits') for i in range(len(seeds))]
+    else:
+        ofilenames = None
         
     estimator.step_batch_2pass(
-        alm_loader, seeds, comm=comm, verbose=False, theta_batch=args.ksw_theta_batch)        
+        alm_loader, seeds, comm=comm, verbose=False, ofilenames=ofilenames,
+        theta_batch=args.ksw_theta_batch)
     
     fisher = estimator.compute_fisher_2pass(comm)
     if comm.rank == 0:
