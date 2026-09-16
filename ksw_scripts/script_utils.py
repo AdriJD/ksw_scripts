@@ -25,7 +25,7 @@ def slice2len(sel):
 
     return np.arange(sel.start, sel.stop, sel.step).size
 
-def get_radii_leo(oversample=1):
+def get_radii_leo(oversample=1, radius_min=None):
     '''
     Get radii (in Mpc) suitable for the Local, Equilateral and Orthogonal
     bispectra.
@@ -34,14 +34,16 @@ def get_radii_leo(oversample=1):
     ----------
     oversample : float
         Over- or undersample the radii by this factor.
+    radius_min : float, optional
+        If set, start from this radius in Mpc. Default to 1 Mpc.
 
     Returns
     -------
     radii : (nr) array
         Radii in Mpc.
     '''
-
-    low1 = np.linspace(1, 9377, num=int(24 * oversample), endpoint=False)
+    
+    low1 = np.linspace(radius_min, 9377, num=int(24 * oversample), endpoint=False)
     rei1 = np.linspace(9377, 10007, num=int(4 * oversample), endpoint=False)
     rei2 = np.linspace(10007, 12632, num=int(8 * oversample), endpoint=False)
     rec1 = np.linspace(12632, 13682, num=int(12 * oversample), endpoint=False)
@@ -50,6 +52,12 @@ def get_radii_leo(oversample=1):
 
     radii = np.concatenate((low1, rei1, rei2, rec1, rec2, rec3))
 
+    if radius_min:
+        idx = np.searchsorted(radii, radius_min)
+        radii = np.insert(radii, idx, radius_min)
+        radii = radii[radii >= radius_min]
+        radii = np.unique(radii)
+        
     return radii
 
 def get_radii_rec(oversample=1):

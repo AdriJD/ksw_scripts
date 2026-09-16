@@ -129,8 +129,10 @@ if __name__ == '__main__':
     
         estimator = ksw.KSW([rb], None, lmax, pol, precision=precision)
         itotcov_ell_trunc = np.ascontiguousarray(itotcov_ell[:,:,:lmax+1])
-        fisher_array[lidx] = estimator.compute_fisher_isotropic(
-            itotcov_ell_trunc, return_matrix=False, comm=comm)
+        fisher, fisher_nxn = estimator.compute_fisher_isotropic(
+            itotcov_ell_trunc, return_matrix=True, comm=comm)
+        fisher_array[lidx] = fisher
+        np.save(opj(fnldir, f'fisher_nxn_lmax{lmax}.npy'), fisher_nxn)
 
     if comm.rank == 0:
         script_utils.write_fisher(

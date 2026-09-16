@@ -1,22 +1,20 @@
-'''
-Compute the reduced bispectra for the Local, Equilateral
-and Orthogonal models.
-'''
 import os
 import argparse
 
 import numpy as np
 import camb
-from ksw import Shape, Cosmology
+from mpi4py import MPI
+from ksw import Cosmology
 
 from ksw_scripts import script_utils
 
+comm = MPI.COMM_WORLD
 opj = os.path.join
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
-        description='Compute and store reduced bispectra.')
+        description='Compute the real-space cov matrix of the Bardeen potential.')
     parser.add_argument("--odir", required=True,
                         help='Output directory.')
     parser.add_argument("--lmax", type=int, required=True,
@@ -27,11 +25,8 @@ if __name__ == '__main__':
                         help='spectral index')
     parser.add_argument('--r-trunc', action='store_true',
                         help='Only use radii around recombination')
-    parser.add_arguement('--r-min', type=float,
+    parser.add_argument('--r-min', type=float,
                          help='Specify a minimum radius in Mpc.')
-    parser.add_arguement('--templates', type=str, nargs='+',
-                         default=['local', 'equilateral', 'orthogonal']
-                         help='Specify models to compuate, defaults to all 3.')
     args = parser.parse_args()
 
     os.makedirs(args.odir, exist_ok=True)
@@ -42,37 +37,20 @@ if __name__ == '__main__':
     pars = camb.CAMBparams()
     pars.set_cosmology(**cosmo_opts)
     ip = camb.initialpower.InitialPowerLaw()
-    # Note, ns here does not really matter, only for camb Cls.
     ip.set_params(As=2.10058e-9, ns=args.ns, pivot_scalar=0.05)
     pars.set_initial_power(ip)
     cosmo = Cosmology(pars)
-
-    cosmo.compute_transfer(args.lmax)
-    cosmo.compute_c_ell()
-    cosmo.write_transfer(opj(args.odir, f'transfer_lmax{args.lmax}'))
-    cosmo.write_c_ell(opj(args.odir, f'c_ell_lmax{args.lmax}'))
-
-    shapes = []    
-    if 'local' in args.templates:
-        shapes.append(Shape.prim_local(ns=args.ns))
-    if 'equilateral' in args.templates:
-        shapes.append(Shape.prim_equilateral(ns=args.ns))
-    if 'orthogonal' in args.templates:
-        shapes.append(Shape.prim_orthogonal(ns=args.ns))
 
     if args.r_trunc:
         radii = script_utils.get_radii_rec(args.rfac, radius_min=args.r_min)
     else:
         radii = script_utils.get_radii_leo(args.rfac, radius_min=args.r_min)
+    
+    cov_phi = cosmo.get_real_space_phi_cov(
+        radii, args.lmax, comm=comm, root=0, verbose=True)
 
-    for shape in [local, equilateral, orthogonal]:
-
-        if len(cosmo.red_bispectra) > 0:
-            cosmo.red_bispectra = []
-
-        cosmo.add_prim_reduced_bispectrum(shape, radii)
-        rb = cosmo.red_bispectra[0]
-        rb.write(opj(args.odir, f'{shape.name}_lmax{args.lmax}_ns{args.ns:.2f}'\
-                     f'_rfac{args.rfac:.2f}_rtrunc{int(args.r_trunc)}'))
+    if comm.rank == 0:
+        np.save(opj(args.odir, f'cov_phi_rfac{args.rfac:.2f}_rtrunc{int(args.r_trunc)}'),
+                cov_phi)
         np.save(opj(args.odir, f'radii_rfac{args.rfac:.2f}_rtrunc{int(args.r_trunc)}'),
                 radii)
