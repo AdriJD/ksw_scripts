@@ -48,6 +48,10 @@ if __name__ == '__main__':
         help='Use single precision.')
     parser.add_argument("--seed", default=0, type=int,
         help='Global seed from which each simulation derives its seed.')
+    parser.add_argument("--optimize-nfact", action='store_true',
+        help='Find and use a small set of optimal bispectrum factors.')
+    parser.add_argument("--optimize-threshold", type=float, default=1e-8,
+        help='Threshold used for `optimize-nfact, lower number gives more terms.')
     
     # KSW.
     parser.add_argument("--ksw-lmax", type=int,
@@ -175,8 +179,24 @@ if __name__ == '__main__':
 
     estimator = ksw.KSW([rb], icov, args.ksw_lmax, pol, precision=precision)
 
-    fisher = estimator.compute_fisher_isotropic(
-        itotcov_ell, return_matrix=False, comm=comm)
+    fisher, fisher_nxn = estimator.compute_fisher_isotropic(
+        itotcov_ell, return_matrix=True, comm=comm)
+
+    if comm.rank == 0:
+        np.save(opj(fnldir, f'fisher_nxn.npy'), fisher_nxn)
+    
+    if args.optimize_nfact:
+        if comm.rank == 0:
+            indices, weights, _ = ksw.fisher_opt.optimize_bispectrum(
+                fisher_nxn, threshold=args.optimize_threshold, verbose=args.ksw_verbose)
+            np.save(opj(fnldir, f'indices_opt.npy'), indices)
+            np.save(opj(fnldir, f'weights_opt.npy'), weights)
+        else:
+            indices, weights = None, None
+        indices = ksw.utils.bcast_array(indices, comm)
+        weights = ksw.utils.bcast_array(weights, comm)
+        estimator.red_bispectra[0].subsample_factors(indices, weights)
+        
     fnls, cubics, lin_terms, fishers = estimator.compute_estimate_batch(
         alm_loader, args.ialm_files, comm=comm, fisher=fisher,
         lin_term=0, theta_batch=args.ksw_theta_batch, verbose=args.ksw_verbose)
