@@ -1034,6 +1034,27 @@ def write_fnl(ofile, idxs, fnls, cubics, lin_terms, fishers):
     fmt = ['%9d', '%+.17e', '%+.17e','%+.17e', '%+.17e']
     np.savetxt(ofile, mat2save, fmt=fmt, delimiter='\t', header=header)
 
+def read_fnl_results(ifile):
+    '''
+    Read the output from `write_fnl` from disk into structured array.
+
+    Parameters
+    ----------
+    ifile : str
+        Path to file
+
+    Returns
+    -------
+    out : (niter,) structured array
+        Structures numpy array with "idx", "fnl", "cubic", "linear", and "fisher"
+        entries.
+    '''
+    
+    dtype = [('idx', 'i8'), ('fnl', 'f8'), ('cubic', 'f8'),
+             ('lin_term', 'f8'), ('fisher', 'f8')]
+    
+    return np.loadtxt(ifile, dtype=dtype)
+    
 def write_fisher(ofile, lmaxs, fishers):
     '''
     Write results from estimate_fisher to text file.
@@ -1087,7 +1108,7 @@ def load_alm(ipath, pslice, lmax=None, dtype=np.complex128):
     '''
 
     hdu = np.arange(1, 100)[pslice]
-    alm = np.asarray(hp.read_alm(ipath, hdu=hdu))
+    alm = mat_utils.atleast_nd(np.asarray(hp.read_alm(ipath, hdu=hdu)), 2)
 
     ainfo = curvedsky.alm_info(hp.Alm.getlmax(alm.shape[-1]))
 

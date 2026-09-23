@@ -59,7 +59,7 @@ if __name__ == '__main__':
     parser.add_argument("--T-only", dest='t_only', action='store_true',
         help='Only use temperature data.')
     parser.add_argument("--E-only", dest='e_only', action='store_true',
-        help='Only use temperature data.')
+        help='Only use E-mode data.')
     parser.add_argument("--iso-weight", action='store_true',
         help='Use isotropic icov weighting instead of CG.')
     parser.add_argument("--single", action='store_true',

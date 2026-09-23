@@ -43,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--T-only", dest='t_only', action='store_true',
         help='Only use temperature data.')
     parser.add_argument("--E-only", dest='e_only', action='store_true',
-        help='Only use temperature data.')
+        help='Only use E-mode data.')
     parser.add_argument("--single", action='store_true',
         help='Use single precision.')
     parser.add_argument("--seed", default=0, type=int,
@@ -80,19 +80,16 @@ if __name__ == '__main__':
         
     if args.t_only:
         pol = ['T']
-        spin = 0
         pslice = slice(0, 1, None)
         no_te = True
         if args.e_only:
             raise ValueError('Cannot have both T and E-only.')
     elif args.e_only:
         pol = ['E']
-        spin = 0
         pslice = slice(1, 2, None)
         no_te = True
     else:
         pol = ['T', 'E']
-        spin = 0
         pslice = slice(0, 2, None)
         no_te = False
 
