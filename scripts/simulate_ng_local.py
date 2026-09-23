@@ -248,7 +248,7 @@ if __name__ == '__main__':
         if comm.rank == 0:
             sidxs_trunc = list(sidxs.copy())
             for idx, sidx in enumerate(sidxs):
-                opath = opath_ng_template.format(sidx)
+                opath = opath_ng_template.format(idx=sidx)
                 if os.path.isfile(opath):
                     sidxs_trunc[idx] = None
                     print(f'skipping {sidx}, {opath=} already exists')
