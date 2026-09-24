@@ -452,6 +452,8 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
         sfilt = None
         lmax_mg = 6000
 
+    assert icov_ell.ndim in (2, 3)
+        
     # Init the initial guess filter.
     if icov_noise_iso_ell is not None:
         itot_cov_iso = get_itotcov_ell(
@@ -464,7 +466,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
                                    mat_utils.matpow(sfilt, -1), wiener_iso)
         
         init_guess_op = lambda x: compute_icov_iso(
-            x, minfo, ainfo, [0, 2], wiener_iso, b_ell=b_ell)
+            x, minfo, ainfo, spin, wiener_iso, b_ell=b_ell)
     else:
         init_guess_op = None
 
@@ -511,7 +513,7 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
                 prec_base = preconditioners.PseudoInvPreconditioner(
                     ainfo, icov_ell, icov_pix, minfo, spin, b_ell=b_ell, sfilt=sfilt)
 
-    elif icov_wav is not None:
+    elif cov_wav is not None:
         solver = solvers.CGWienerMap.from_arrays_fwav(
             imap_template, minfo, ainfo, icov_ell, cov_wav, fkernels,
             b_ell=b_ell, mask_pix=mask, minfo_mask=minfo,
@@ -525,9 +527,10 @@ def init_solver(ainfo, minfo, icov_ell, b_ell, mask,
         prec_masked_cg = preconditioners.MaskedPreconditionerCG(
             ainfo, icov_ell, spin, mask.astype(bool), minfo, lmax=None,
             nsteps=15, lmax_r_ell=None, sfilt=sfilt)
-
+        
         prec_masked_mg = preconditioners.MaskedPreconditioner(
-            ainfo, icov_ell[0:1,0:1], 0, mask[0].astype(bool), minfo,
+            ainfo, icov_ell[0:1,0:1] if icov_ell.ndim == 3 else icov_ell[0:1],
+            0, mask[0].astype(bool), minfo,
             min_pix=1000, n_jacobi=1, lmax_r_ell=lmax_mg,
             sfilt=None if not scale_a else sfilt[0:1,0:1])
     else:
@@ -945,7 +948,7 @@ def compute_icov_alm_iso(alm, ainfo, itotcov_ell, b_ell=None, inplace=False):
         # S^-1(S^-1 + B N^-1 B)^-1 B N^-1 B.
         b_ell = b_ell * np.eye(b_ell.shape[0])[:,:,np.newaxis]
         ibell = mat_utils.matpow(b_ell, -1)
-        alm_c_utils.lmul(alm, ibell, ainfo, inplace=inplace)
+        alm = alm_c_utils.lmul(alm, ibell, ainfo, inplace=inplace)
 
     alm = alm_c_utils.lmul(alm, itotcov_ell, ainfo, inplace=inplace)
 
