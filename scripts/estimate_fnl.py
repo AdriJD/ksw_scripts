@@ -22,9 +22,10 @@ if __name__ == '__main__':
 
     # IO.
     parser.add_argument("--imap-files", type=str, nargs='+',
-        help='Input maps from which fnl is estimated.')
+        help='Input maps from which fnl is estimated. Needs to have consistents units with '\
+             'signal/noise covariances.')
     parser.add_argument("--imap-indices", type=int, nargs='+',
-        help='Indices of input map files, see --imap-file-template.')
+        help='Indices of input files, see imap-file-template. Alternative to `imap-files`.')
     parser.add_argument("--imap-file-template", type=str,
         help='Template of imap file names that can be parsed as python string '\
              'and contains "{idx}". For example: "/path/to/sim_{idx:03d}.fits"')    

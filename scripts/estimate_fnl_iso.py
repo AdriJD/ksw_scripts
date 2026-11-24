@@ -21,9 +21,10 @@ if __name__ == '__main__':
         'anisotropic noise covariance.')
     # IO.
     parser.add_argument("--imap_files", type=str, nargs='+',
-        help='Input maps from which fnl is estimated.')
+        help='Input maps from which fnl is estimated. Needs to have consistent units with '\
+             'signal/noise power spectra.')
     parser.add_argument("--ialm_files", type=str, nargs='+',
-        help='Input alms from which fnl is estimated.')
+        help='Input alms from which fnl is estimated. Alternative to `imap-files`.')
     parser.add_argument("--odir", required=True, type=str,
         help='Output directory.')    
     parser.add_argument("--red-bisp-file", type=str, required=True,
